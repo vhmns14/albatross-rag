@@ -76,20 +76,26 @@ function tokenize(text: string): string[] {
   return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
 }
 
-function chunkText(text: string, source: string, chunkSize = 400, overlap = 80): Chunk[] {
+// Line/paragraph-aware chunking preserving complete table rows & names
+function chunkText(text: string, source: string, targetSize = 1000, overlap = 150): Chunk[] {
   const result: Chunk[] = [];
-  // Clean raw control characters & normalize newlines
   const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ").replace(/\r\n/g, "\n").trim();
   if (!clean) return result;
 
-  const step = Math.max(1, chunkSize - overlap);
-  let start = 0;
+  const lines = clean.split("\n");
+  let currentLines: string[] = [];
+  let currentLen = 0;
   let idx = 1;
 
-  while (start < clean.length) {
-    const end = Math.min(clean.length, start + chunkSize);
-    const chunkStr = clean.slice(start, end).trim();
-    if (chunkStr.length > 0) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    currentLines.push(line);
+    currentLen += line.length + 1;
+
+    if (currentLen >= targetSize) {
+      const chunkStr = currentLines.join("\n");
       result.push({
         chunk_id: `chk_${String(idx).padStart(3, "0")}`,
         page: 1,
@@ -98,10 +104,30 @@ function chunkText(text: string, source: string, chunkSize = 400, overlap = 80):
         token_count: Math.ceil(chunkStr.length / 4)
       });
       idx++;
+
+      let overlapLines: string[] = [];
+      let overlapLen = 0;
+      for (let j = currentLines.length - 1; j >= 0; j--) {
+        if (overlapLen + currentLines[j].length > overlap) break;
+        overlapLines.unshift(currentLines[j]);
+        overlapLen += currentLines[j].length + 1;
+      }
+      currentLines = overlapLines;
+      currentLen = overlapLen;
     }
-    if (end >= clean.length) break;
-    start += step;
   }
+
+  if (currentLines.length > 0) {
+    const chunkStr = currentLines.join("\n");
+    result.push({
+      chunk_id: `chk_${String(idx).padStart(3, "0")}`,
+      page: 1,
+      source,
+      text: chunkStr,
+      token_count: Math.ceil(chunkStr.length / 4)
+    });
+  }
+
   return result;
 }
 
@@ -198,7 +224,7 @@ function bm25Scores(queryTokens: string[], docList: Chunk[]): number[] {
   return scores;
 }
 
-// Hybrid Retrieval Pipeline
+// Hybrid Retrieval Pipeline with Source-Boosting & Dynamic Top-K
 async function retrievePipeline(
   query: string,
   mode: "hybrid" | "naive",
@@ -214,11 +240,18 @@ async function retrievePipeline(
   }
 
   const qTokens = tokenize(query);
+  const queryLower = query.toLowerCase();
 
   // 1. BM25 Retrieval
   const t0 = performance.now();
   const bm25Raw = bm25Scores(qTokens, chunks);
-  const bm25Indexed = bm25Raw.map((score, idx) => ({ idx, score }));
+  const bm25Indexed = bm25Raw.map((score, idx) => {
+    // Add document source keyword bonus (e.g. if user mentions "absensi" and doc source has "absensi")
+    const srcLower = chunks[idx].source.toLowerCase();
+    const isDocMentioned = qTokens.some(t => t.length >= 3 && srcLower.includes(t));
+    const boostedScore = isDocMentioned ? score + 3.0 : score;
+    return { idx, score: boostedScore };
+  });
   bm25Indexed.sort((a, b) => b.score - a.score);
   timings.push({ step: "BM25 Sparse Retrieval", duration_ms: +(performance.now() - t0).toFixed(2) });
 
@@ -257,7 +290,12 @@ async function retrievePipeline(
 
   const denseScores = chunks.map((c, idx) => {
     if (!c.vector) c.vector = generateDeterministicVector(c.text, 1024);
-    return { idx, score: cosineSimilarity(queryVec, c.vector) };
+    let sim = cosineSimilarity(queryVec, c.vector);
+    const srcLower = c.source.toLowerCase();
+    if (qTokens.some(t => t.length >= 3 && srcLower.includes(t))) {
+      sim += 0.3; // Boost relevant document
+    }
+    return { idx, score: sim };
   });
   denseScores.sort((a, b) => b.score - a.score);
   timings.push({ step: "Dense Vector Cosine (1024d)", duration_ms: +(performance.now() - t1).toFixed(2) });
@@ -277,15 +315,16 @@ async function retrievePipeline(
   rrfList.sort((a, b) => b.score - a.score);
   timings.push({ step: "Reciprocal Rank Fusion (RRF)", duration_ms: +(performance.now() - t2).toFixed(2) });
 
-  // 4. Cross-Score Reranking
+  // 4. Cross-Score Reranking (Pool size expands dynamically to topK)
   const t3 = performance.now();
-  const topCandidates = rrfList.slice(0, Math.min(10, rrfList.length));
+  const poolSize = Math.min(Math.max(15, topK), rrfList.length);
+  const topCandidates = rrfList.slice(0, poolSize);
   const reranked = topCandidates.map((cand, rankIndex) => {
     const bmScore = bm25Raw[cand.idx] || 0;
     const denseScore = denseScores.find(d => d.idx === cand.idx)?.score || 0;
     const normalizedBM25 = Math.min(1.0, bmScore / 5.0);
     const normalizedDense = Math.max(0, denseScore);
-    const finalScore = 0.5 * normalizedDense + 0.5 * normalizedBM25 - (rankIndex * 0.05);
+    const finalScore = 0.5 * normalizedDense + 0.5 * normalizedBM25 - (rankIndex * 0.02);
     return {
       ...chunks[cand.idx],
       score: +Math.max(0.01, finalScore).toFixed(4)
@@ -309,11 +348,13 @@ function buildPrompt(query: string, retrieved: Chunk[]): { sysPrompt: string; us
     .join("\n\n---\n\n");
 
   const sysPrompt = `Anda adalah Albatross Enterprise RAG Assistant.
-Tugas Anda menjawab pertanyaan pengguna secara jelas, terstruktur, dan akurat HANYA berdasarkan konteks dokumen terverifikasi yang diberikan.
-Aturan:
-1. Jawab dalam Bahasa Indonesia yang baik dan profesional.
-2. Cantumkan sitasi sumber potongan dokumen (misal [chk_001]) jika relevan.
-3. Jika informasi tidak ditemukan sama sekali di dalam dokumen, katakan dengan jujur bahwa informasi tersebut tidak tercantum dalam dokumen yang diunggah.`;
+Tugas Anda menjawab pertanyaan pengguna secara lengkap, terstruktur, dan akurat HANYA berdasarkan konteks dokumen terverifikasi yang diberikan.
+Aturan Mutlak:
+1. Jawab dalam Bahasa Indonesia yang baik, lugas, dan teratur.
+2. Jika pengguna meminta daftar nama (seperti seluruh nama mahasiswa, peserta, nilai, atau baris tabel), sebutkan SEMUA nama dan data yang ada di dalam seluruh potongan konteks dokumen secara lengkap dan tuntas dari nomor pertama sampai nomor terakhir. JANGAN memotong atau menyingkatnya dengan kata 'dll', 'dsb', atau sejenisnya.
+3. Urutkan nama sesuai penomoran asli yang tercantum di dokumen.
+4. Cantumkan sitasi chunk ID sumber jika relevan.
+5. Jika informasi tidak ditemukan sama sekali di dalam dokumen, katakan dengan jujur bahwa informasi tersebut tidak tercantum dalam dokumen yang diunggah.`;
 
   const userPrompt = `KONTEKS DOKUMEN TERVERIFIKASI:\n${contextStr}\n\nPERTANYAAN PENGGUNA:\n${query}`;
   return { sysPrompt, userPrompt };
@@ -479,7 +520,7 @@ export default {
           return new Response(JSON.stringify({ detail: "Dokumen tidak mengandung teks yang dapat dibaca." }), { status: 400, headers: corsHeaders });
         }
 
-        const newChunks = chunkText(text, docName);
+        const newChunks = chunkText(text, docName, 1000, 150);
         chunks = [...chunks, ...newChunks];
         return new Response(JSON.stringify({
           status: "success",
@@ -492,9 +533,9 @@ export default {
       }
     }
 
-    // 9. POST /api/query (Streaming SSE with multi-LLM & Cloudflare Workers AI)
+    // 9. POST /api/query (Streaming SSE with Dynamic Top-K & Multi-LLM)
     if (url.pathname === "/api/query" && request.method === "POST") {
-      const body = await request.json() as { query: string; mode?: "hybrid" | "naive"; provider?: string };
+      const body = await request.json() as { query: string; mode?: "hybrid" | "naive"; provider?: string; top_k?: number };
       const queryStr = (body.query || "").trim();
       if (!queryStr) {
         return new Response(JSON.stringify({ detail: "Pertanyaan tidak boleh kosong." }), { status: 400, headers: corsHeaders });
@@ -504,8 +545,13 @@ export default {
       const provider = body.provider || "cf-llama";
       const startTime = performance.now();
 
+      // Dynamic Top-K: If query asks for "semua" / "seluruh" / "daftar" or if knowledge base is compact, retrieve more chunks!
+      const isExhaustive = /semua|seluruh|daftar|list|lengkap|siapa saja|rangkum|ringkas/i.test(queryStr);
+      const defaultTopK = isExhaustive ? Math.min(chunks.length, 15) : Math.min(chunks.length, 8);
+      const topK = body.top_k ? Math.min(chunks.length, body.top_k) : Math.max(4, defaultTopK);
+
       // Retrieve
-      const retrieval = await retrievePipeline(queryStr, mode, 3, env);
+      const retrieval = await retrievePipeline(queryStr, mode, topK, env);
       const { sysPrompt, userPrompt } = buildPrompt(queryStr, retrieval.chunks);
 
       const inputTokens = Math.ceil((sysPrompt.length + userPrompt.length) / 4);
@@ -556,13 +602,14 @@ export default {
           let streamedSuccessfully = false;
 
           // Strategy A: Cloudflare Workers AI (Native Edge, Free, Zero Rate-Limits, Fast!)
-          if ((provider === "cf-llama" || provider === "cf") && env.AI) {
+          if ((provider === "cf-llama" || provider === "cf" || !env.OPUS_API_KEY) && env.AI) {
             try {
               const aiStream = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
                 messages: [
                   { role: "system", content: sysPrompt },
                   { role: "user", content: userPrompt }
                 ],
+                max_tokens: 2048,
                 stream: true
               }) as ReadableStream;
 
@@ -598,7 +645,7 @@ export default {
           }
 
           // Strategy B: Claude Opus Proxy
-          if (!streamedSuccessfully && (provider === "opus" || !env.AI) && env.OPUS_API_KEY) {
+          if (!streamedSuccessfully && provider === "opus" && env.OPUS_API_KEY) {
             const opusBase = env.OPUS_BASE_URL || "https://emtf.aipm9527.xyz/v1";
             try {
               const llmRes = await fetch(`${opusBase}/chat/completions`, {
@@ -613,6 +660,7 @@ export default {
                     { role: "system", content: sysPrompt },
                     { role: "user", content: userPrompt }
                   ],
+                  max_tokens: 2048,
                   temperature: 0.2,
                   stream: true
                 })
@@ -651,7 +699,7 @@ export default {
             }
           }
 
-          // Strategy C: If all upstream APIs fail, fallback to Cloudflare Workers AI or structured synthesis
+          // Strategy C: If all upstream APIs fail, fallback to Cloudflare Workers AI Llama-3.1-8b
           if (!streamedSuccessfully) {
             if (env.AI) {
               try {
@@ -659,7 +707,8 @@ export default {
                   messages: [
                     { role: "system", content: sysPrompt },
                     { role: "user", content: userPrompt }
-                  ]
+                  ],
+                  max_tokens: 2048
                 }) as { response?: string };
 
                 const textRes = res.response || "";
@@ -674,10 +723,8 @@ export default {
             }
 
             if (!streamedSuccessfully) {
-              // High-quality deterministic answer grounded in verified text
               const summary = `Berikut ringkasan berdasarkan dokumen terverifikasi:\n\n` +
-                retrieval.chunks.map(c => `• [${c.chunk_id}] ${c.text.slice(0, 300)}...`).join("\n\n") +
-                `\n\n(Catatan: Respon disintesis dari kutipan dokumen terindeks).`;
+                retrieval.chunks.map(c => `• [${c.chunk_id}]\n${c.text}`).join("\n\n");
               fullText = summary;
               for (const word of summary.split(" ")) {
                 await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "delta", content: word + " " })}\n\n`));

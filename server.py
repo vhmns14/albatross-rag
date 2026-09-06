@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 # Global in-memory engine and session stats
-engine = AlbatrossEngine(chunk_size=400, chunk_overlap=80)
+engine = AlbatrossEngine(chunk_size=1000, chunk_overlap=150)
 engine.load_text(SAMPLE_CORPUS, source_name="laporan_keuangan_2024.txt")
 
 session_stats = {
@@ -202,8 +202,10 @@ async def execute_query(req: QueryRequest):
     )
     t_start = time.perf_counter()
 
-    # Step 1: Retrieval
-    retrieved_chunks = engine.retrieve(sanitized_query, mode=req.mode, top_k=3, telemetry=telemetry)
+    # Step 1: Retrieval (Dynamic Top-K for exhaustive requests)
+    is_exhaustive = any(w in sanitized_query.lower() for w in ["semua", "seluruh", "daftar", "list", "lengkap", "siapa saja"])
+    target_top_k = min(len(engine.chunks), 15) if is_exhaustive else min(len(engine.chunks), 8)
+    retrieved_chunks = engine.retrieve(sanitized_query, mode=req.mode, top_k=max(3, target_top_k), telemetry=telemetry)
     sys_prompt, user_prompt = engine.build_prompt(sanitized_query, retrieved_chunks)
     telemetry.input_tokens = estimate_tokens(sys_prompt + user_prompt)
 
