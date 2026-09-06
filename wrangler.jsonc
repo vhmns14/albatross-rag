@@ -10,7 +10,10 @@
   "vars": {
     "OPUS_BASE_URL": "https://emtf.aipm9527.xyz/v1",
     "OPUS_MODEL": "claude-opus-4.6",
-    "DEFAULT_MODEL": "opus"
+    "DEFAULT_MODEL": "cf-llama"
+  },
+  "ai": {
+    "binding": "AI"
   },
   "observability": {
     "enabled": true

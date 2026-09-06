@@ -9,6 +9,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- PDF.js for Clean In-Browser PDF Text Extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (typeof pdfjsLib !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -104,7 +111,7 @@
           <input type="file" id="file-input" class="hidden" accept=".pdf,.txt">
           <i data-lucide="upload-cloud" class="w-5 h-5 mx-auto text-zinc-400 mb-1"></i>
           <p class="text-xs text-zinc-200 font-medium">Unggah Dokumen</p>
-          <p class="text-[10px] text-zinc-500 mt-0.5">PDF atau TXT (Maks. 10MB)</p>
+          <p id="dropzone-desc" class="text-[10px] text-zinc-500 mt-0.5">PDF atau TXT (Maks. 10MB)</p>
         </div>
 
         <!-- Quick Action Buttons -->
@@ -149,9 +156,9 @@
         <div>
           <label class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-1">LLM Model</label>
           <select id="model-select" class="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600 font-mono">
-            <option value="opus" selected>Claude Opus 4.6 (Active)</option>
-            <option value="mistral">Mistral Large (Active)</option>
-            <option value="groq">Groq (Llama 3.3 70B)</option>
+            <option value="cf-llama" selected>Llama 3.3 70B (Cloudflare Edge - Cepat &amp; Stabil)</option>
+            <option value="opus">Claude Opus 4.6 (Proxy Channel)</option>
+            <option value="mistral">Mistral Large</option>
           </select>
         </div>
 
@@ -868,25 +875,64 @@
       }
     });
 
-    async function handleUpload(file) {
-      const formData = new FormData();
-      formData.append('file', file);
+    async function extractTextFromPDF(file) {
+      if (typeof pdfjsLib === 'undefined') {
+        throw new Error("PDF.js library belum siap dimuat.");
+      }
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        if (pageText.trim()) {
+          fullText += `[Halaman ${i}]\n${pageText.trim()}\n\n`;
+        }
+      }
+      return fullText.trim();
+    }
 
+    async function handleUpload(file) {
+      const dropzoneDesc = document.getElementById('dropzone-desc');
       try {
+        let textContent = '';
+        const isPdf = file.name.toLowerCase().endsWith('.pdf');
+
+        if (dropzoneDesc) dropzoneDesc.textContent = isPdf ? 'Mengekstrak teks PDF...' : 'Membaca file...';
+
+        if (isPdf) {
+          textContent = await extractTextFromPDF(file);
+        } else {
+          textContent = await file.text();
+        }
+
+        if (!textContent || !textContent.trim()) {
+          alert("Dokumen PDF tidak mengandung teks digital yang dapat diekstrak (kemungkinan file scan/gambar tanpa OCR).");
+          return;
+        }
+
+        if (dropzoneDesc) dropzoneDesc.textContent = 'Mengindeks ke Knowledge Base...';
+
+        const formData = new FormData();
+        formData.append('filename', file.name);
+        formData.append('text', textContent);
+
         const res = await fetch('/api/upload', {
           method: 'POST',
           body: formData
         });
         const data = await res.json();
         if (res.ok) {
-          alert(`Sukses mengunggah ${file.name} (${data.added_chunks} chunks ditambahkan).`);
+          alert(`Sukses mengunggah "${file.name}"!\nSebanyak ${data.added_chunks} chunks berhasil diekstrak dan diindeks secara bersih.`);
           await loadDocumentsAndStatus();
         } else {
           alert(`Upload gagal: ${data.detail || 'Error'}`);
         }
       } catch (err) {
-        alert(`Gagal mengunggah file: ${err.message}`);
+        alert(`Gagal memproses file: ${err.message}`);
       } finally {
+        if (dropzoneDesc) dropzoneDesc.textContent = 'PDF atau TXT (Maks. 10MB)';
         fileInput.value = '';
       }
     }

@@ -2,6 +2,7 @@
 
 export interface Env {
   ASSETS: Fetcher;
+  AI?: any;
   OPUS_BASE_URL?: string;
   OPUS_API_KEY?: string;
   OPUS_MODEL?: string;
@@ -77,7 +78,8 @@ function tokenize(text: string): string[] {
 
 function chunkText(text: string, source: string, chunkSize = 400, overlap = 80): Chunk[] {
   const result: Chunk[] = [];
-  const clean = text.replace(/\r\n/g, "\n").trim();
+  // Clean raw control characters & normalize newlines
+  const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ").replace(/\r\n/g, "\n").trim();
   if (!clean) return result;
 
   const step = Math.max(1, chunkSize - overlap);
@@ -106,7 +108,6 @@ function chunkText(text: string, source: string, chunkSize = 400, overlap = 80):
 function initCorpus() {
   chunks = chunkText(SAMPLE_CORPUS, "laporan_keuangan_2024.txt (Demo)");
 }
-// Initialize with sample corpus by default, but user can clear or delete anytime!
 initCorpus();
 
 function getDocumentsSummary(): DocumentInfo[] {
@@ -304,15 +305,17 @@ function buildPrompt(query: string, retrieved: Chunk[]): { sysPrompt: string; us
   }
 
   const contextStr = retrieved
-    .map(c => `[Doc: ${c.source} | Chunk: ${c.chunk_id}]\n${c.text}`)
+    .map(c => `[Dokumen: ${c.source} | Chunk ID: ${c.chunk_id}]\n${c.text}`)
     .join("\n\n---\n\n");
 
-  const sysPrompt = `Anda adalah Albatross Intelligence Engine, sistem analitik enterprise tingkat tinggi.
-Gunakan HANYA informasi dari konteks terverifikasi di bawah ini untuk menjawab pertanyaan.
-Jika informasi tidak ada, jawab dengan jujur bahwa data tidak tersedia dalam dokumen.
-Format jawaban lugas, profesional, dan cantumkan sitasi chunk ID jika relevan.`;
+  const sysPrompt = `Anda adalah Albatross Enterprise RAG Assistant.
+Tugas Anda menjawab pertanyaan pengguna secara jelas, terstruktur, dan akurat HANYA berdasarkan konteks dokumen terverifikasi yang diberikan.
+Aturan:
+1. Jawab dalam Bahasa Indonesia yang baik dan profesional.
+2. Cantumkan sitasi sumber potongan dokumen (misal [chk_001]) jika relevan.
+3. Jika informasi tidak ditemukan sama sekali di dalam dokumen, katakan dengan jujur bahwa informasi tersebut tidak tercantum dalam dokumen yang diunggah.`;
 
-  const userPrompt = `KONTEKS TERVERIFIKASI:\n${contextStr}\n\nPERTANYAAN ANALITIK:\n${query}`;
+  const userPrompt = `KONTEKS DOKUMEN TERVERIFIKASI:\n${contextStr}\n\nPERTANYAAN PENGGUNA:\n${query}`;
   return { sysPrompt, userPrompt };
 }
 
@@ -343,7 +346,7 @@ export default {
         chunks_indexed: chunks.length,
         documents_count: getDocumentsSummary().length,
         embedding_model: env.MISTRAL_API_KEY ? "mistral-embed" : "edge-hash-1024d",
-        default_model: env.DEFAULT_MODEL || "opus",
+        default_model: env.DEFAULT_MODEL || "cf-llama",
         total_queries: sessionStats.total_queries,
         total_cost_usd: +sessionStats.total_cost_usd.toFixed(6),
         uptime_seconds: Math.floor((Date.now() - sessionStats.start_time) / 1000)
@@ -355,13 +358,13 @@ export default {
       return new Response(JSON.stringify(getDocumentsSummary()), { headers: corsHeaders });
     }
 
-    // 3. POST /api/documents/clear (KOSONGKAN SEMUA DOKUMEN)
+    // 3. POST /api/documents/clear
     if (url.pathname === "/api/documents/clear" && request.method === "POST") {
       chunks = [];
       return new Response(JSON.stringify({ status: "success", message: "Knowledge base dikosongkan.", chunks_count: 0 }), { headers: corsHeaders });
     }
 
-    // 4. POST /api/documents/delete (HAPUS DOKUMEN TERTENTU)
+    // 4. POST /api/documents/delete
     if (url.pathname === "/api/documents/delete" && request.method === "POST") {
       try {
         const body = await request.json() as { name: string };
@@ -450,19 +453,32 @@ export default {
       }), { headers: corsHeaders });
     }
 
-    // 8. POST /api/upload
+    // 8. POST /api/upload (Accepts clean extracted text or file)
     if (url.pathname === "/api/upload" && request.method === "POST") {
       try {
         const formData = await request.formData();
+        const directText = formData.get("text") as string | null;
         const file = formData.get("file") as File | null;
-        if (!file) {
-          return new Response(JSON.stringify({ detail: "File missing." }), { status: 400, headers: corsHeaders });
+        const directFilename = formData.get("filename") as string | null;
+
+        let text = directText || "";
+        const docName = directFilename || (file ? file.name : `doc_${Date.now()}.txt`);
+
+        if (!text && file) {
+          text = await file.text();
         }
-        const text = await file.text();
+
+        // Critical guard: reject unextracted raw binary PDF streams
+        if (text.startsWith("%PDF-") || /[\x00-\x08\x0E-\x1F]/.test(text.slice(0, 100))) {
+          return new Response(JSON.stringify({
+            detail: "File PDF binary terdeteksi tanpa ekstraksi teks. Silakan gunakan tombol upload pada antarmuka web yang otomatis mengekstrak teks asli dokumen."
+          }), { status: 400, headers: corsHeaders });
+        }
+
         if (!text.trim()) {
-          return new Response(JSON.stringify({ detail: "File kosong atau tidak terbaca." }), { status: 400, headers: corsHeaders });
+          return new Response(JSON.stringify({ detail: "Dokumen tidak mengandung teks yang dapat dibaca." }), { status: 400, headers: corsHeaders });
         }
-        const docName = file.name || `doc_${Date.now()}.txt`;
+
         const newChunks = chunkText(text, docName);
         chunks = [...chunks, ...newChunks];
         return new Response(JSON.stringify({
@@ -476,16 +492,16 @@ export default {
       }
     }
 
-    // 9. POST /api/query (Streaming SSE)
+    // 9. POST /api/query (Streaming SSE with multi-LLM & Cloudflare Workers AI)
     if (url.pathname === "/api/query" && request.method === "POST") {
-      const body = await request.json() as { query: string; mode?: "hybrid" | "naive"; provider?: "opus" | "mistral" | "groq" };
+      const body = await request.json() as { query: string; mode?: "hybrid" | "naive"; provider?: string };
       const queryStr = (body.query || "").trim();
       if (!queryStr) {
         return new Response(JSON.stringify({ detail: "Pertanyaan tidak boleh kosong." }), { status: 400, headers: corsHeaders });
       }
 
       const mode = body.mode || "hybrid";
-      const provider = body.provider || "opus";
+      const provider = body.provider || "cf-llama";
       const startTime = performance.now();
 
       // Retrieve
@@ -518,14 +534,14 @@ export default {
 
           // If no chunks indexed:
           if (retrieval.chunks.length === 0) {
-            const noDocMsg = "Knowledge base saat ini belum memiliki dokumen. Silakan unggah file PDF/TXT di sidebar kiri atau klik tombol 'Muat Contoh Demo' untuk mencoba fitur pencarian hybrid.";
+            const noDocMsg = "Knowledge base saat ini belum memiliki dokumen yang valid. Silakan unggah dokumen PDF/TXT melalui sidebar kiri terlebih dahulu.";
             await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "delta", content: noDocMsg })}\n\n`));
             const endTelemetry = {
               type: "telemetry",
               timings: [{ step: "Knowledge Check", duration_ms: 0.1 }],
               total_latency_ms: +(performance.now() - startTime).toFixed(2),
               input_tokens: 0,
-              output_tokens: 25,
+              output_tokens: 20,
               cost_usd: 0,
               total_session_cost: sessionStats.total_cost_usd
             };
@@ -537,16 +553,58 @@ export default {
           // Generate LLM tokens
           const tGen = performance.now();
           let fullText = "";
+          let streamedSuccessfully = false;
 
-          const opusKey = env.OPUS_API_KEY;
-          const opusBase = env.OPUS_BASE_URL || "https://emtf.aipm9527.xyz/v1";
+          // Strategy A: Cloudflare Workers AI (Native Edge, Free, Zero Rate-Limits, Fast!)
+          if ((provider === "cf-llama" || provider === "cf") && env.AI) {
+            try {
+              const aiStream = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+                messages: [
+                  { role: "system", content: sysPrompt },
+                  { role: "user", content: userPrompt }
+                ],
+                stream: true
+              }) as ReadableStream;
 
-          if (provider === "opus" && opusKey) {
+              const reader = aiStream.getReader();
+              const decoder = new TextDecoder();
+              let buffer = "";
+
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
+
+                for (const line of lines) {
+                  const trimmed = line.trim();
+                  if (trimmed.startsWith("data: ") && trimmed !== "data: [DONE]") {
+                    try {
+                      const parsed = JSON.parse(trimmed.slice(6));
+                      const token = parsed.response || "";
+                      if (token) {
+                        fullText += token;
+                        await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "delta", content: token })}\n\n`));
+                      }
+                    } catch {}
+                  }
+                }
+              }
+              streamedSuccessfully = true;
+            } catch (err: any) {
+              console.error("Workers AI error:", err);
+            }
+          }
+
+          // Strategy B: Claude Opus Proxy
+          if (!streamedSuccessfully && (provider === "opus" || !env.AI) && env.OPUS_API_KEY) {
+            const opusBase = env.OPUS_BASE_URL || "https://emtf.aipm9527.xyz/v1";
             try {
               const llmRes = await fetch(`${opusBase}/chat/completions`, {
                 method: "POST",
                 headers: {
-                  "Authorization": `Bearer ${opusKey}`,
+                  "Authorization": `Bearer ${env.OPUS_API_KEY}`,
                   "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
@@ -586,25 +644,44 @@ export default {
                     }
                   }
                 }
-              } else {
-                throw new Error("Opus API returned status " + llmRes.status);
+                streamedSuccessfully = true;
               }
             } catch (err) {
-              // Graceful grounded fallback
-              const fallback = `Berdasarkan dokumen terverifikasi:\n\n` +
-                retrieval.chunks.map(c => `• [${c.chunk_id}] ${c.text}`).join("\n\n");
-              for (const word of fallback.split(" ")) {
-                fullText += word + " ";
+              console.error("Opus proxy error:", err);
+            }
+          }
+
+          // Strategy C: If all upstream APIs fail, fallback to Cloudflare Workers AI or structured synthesis
+          if (!streamedSuccessfully) {
+            if (env.AI) {
+              try {
+                const res = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+                  messages: [
+                    { role: "system", content: sysPrompt },
+                    { role: "user", content: userPrompt }
+                  ]
+                }) as { response?: string };
+
+                const textRes = res.response || "";
+                if (textRes) {
+                  fullText = textRes;
+                  for (const word of textRes.split(" ")) {
+                    await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "delta", content: word + " " })}\n\n`));
+                  }
+                  streamedSuccessfully = true;
+                }
+              } catch (e) {}
+            }
+
+            if (!streamedSuccessfully) {
+              // High-quality deterministic answer grounded in verified text
+              const summary = `Berikut ringkasan berdasarkan dokumen terverifikasi:\n\n` +
+                retrieval.chunks.map(c => `• [${c.chunk_id}] ${c.text.slice(0, 300)}...`).join("\n\n") +
+                `\n\n(Catatan: Respon disintesis dari kutipan dokumen terindeks).`;
+              fullText = summary;
+              for (const word of summary.split(" ")) {
                 await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "delta", content: word + " " })}\n\n`));
               }
-            }
-          } else {
-            // High-speed grounded edge response
-            const grounded = `Berdasarkan data dokumen terverifikasi:\n\n` +
-              retrieval.chunks.map(c => `• [${c.chunk_id} - ${c.source}]\n  ${c.text}`).join("\n\n");
-            for (const word of grounded.split(" ")) {
-              fullText += word + " ";
-              await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "delta", content: word + " " })}\n\n`));
             }
           }
 
