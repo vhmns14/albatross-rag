@@ -27,7 +27,7 @@ from evals.benchmark import run_benchmark, SAMPLE_CORPUS
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".txt"}
 
-ADMIN_KEY = os.getenv("ADMIN_KEY", os.getenv("ACCESS_KEY", "albatross-admin-2026"))
+ADMIN_KEY = (os.getenv("ADMIN_KEY") or os.getenv("ACCESS_KEY") or "").strip()
 
 # Rate Limiter in-memory store
 rate_limit_store = {}
@@ -54,7 +54,7 @@ def check_rate_limit(ip: str, action: str, max_req: int, window_sec: int) -> tup
     return True, 0
 
 def check_auth(authorization: Optional[str] = None) -> bool:
-    if not authorization:
+    if not ADMIN_KEY or not authorization:
         return False
     token = authorization.replace("Bearer ", "").replace("bearer ", "").strip()
     return token == ADMIN_KEY

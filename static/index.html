@@ -372,20 +372,20 @@
       </div>
       <div class="p-5 space-y-4 text-xs font-sans">
         <p class="text-zinc-400 text-xs leading-relaxed">
-          Semua endpoint destruktif (Upload, Hapus, Kosongkan, Benchmark) serta inspeksi teks penuh chunk dilindungi oleh Bearer Authorization. Masukkan kunci rahasia Anda di bawah.
+          Fitur administrasi (Upload dokumen, Hapus, Kosongkan basis data, Benchmark kuantitatif) serta inspeksi teks penuh chunk dilindungi oleh Bearer Token. Masukkan kunci rahasia admin Anda di bawah.
         </p>
         <div class="space-y-1.5 font-mono">
           <label class="text-[11px] text-zinc-400">Admin Secret Key:</label>
-          <input type="password" id="auth-key-input" class="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition" placeholder="albatross-admin-2026">
-          <p class="text-[10px] text-zinc-500">Default: <code class="text-emerald-400">albatross-admin-2026</code> (dapat diubah via Cloudflare Secrets: <code>ADMIN_KEY</code>)</p>
+          <input type="password" id="auth-key-input" class="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition" placeholder="Masukkan kunci rahasia admin...">
+          <p class="text-[10px] text-zinc-500">Kunci rahasia ini hanya diketahui oleh pemilik project (dikonfigurasi pada Cloudflare Secret: <code>ADMIN_KEY</code>).</p>
         </div>
         <div class="flex gap-2 pt-2 font-mono">
           <button onclick="saveAuthKeyAction()" class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition flex items-center justify-center gap-1.5">
             <i data-lucide="check" class="w-3.5 h-3.5"></i>
             <span>Simpan Kunci</span>
           </button>
-          <button onclick="resetAuthKeyDefault()" class="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs rounded-lg border border-zinc-800 transition">
-            Reset Default
+          <button onclick="clearAuthKey()" class="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-rose-400 text-xs rounded-lg border border-zinc-800 transition">
+            Hapus Kunci
           </button>
         </div>
       </div>
@@ -462,11 +462,11 @@
     }
 
     function getAuthToken() {
-      return localStorage.getItem('albatross_access_key') || 'albatross-admin-2026';
+      return (localStorage.getItem('albatross_access_key') || '').trim();
     }
 
     function setAuthToken(token) {
-      if (token) {
+      if (token && token.trim()) {
         localStorage.setItem('albatross_access_key', token.trim());
       } else {
         localStorage.removeItem('albatross_access_key');
@@ -488,6 +488,7 @@
       const input = document.getElementById('auth-key-input');
       input.value = getAuthToken();
       modal.classList.remove('hidden');
+      setTimeout(() => input.focus(), 100);
     }
 
     function closeAuthModal() {
@@ -496,17 +497,23 @@
 
     function saveAuthKeyAction() {
       const input = document.getElementById('auth-key-input');
-      setAuthToken(input.value);
+      const val = input.value.trim();
+      setAuthToken(val);
       closeAuthModal();
-      alert('Kunci akses berhasil disimpan.');
+      if (val) {
+        alert('Kunci akses berhasil disimpan di browser Anda.');
+      } else {
+        alert('Kunci akses dikosongkan.');
+      }
     }
 
-    function resetAuthKeyDefault() {
-      setAuthToken('albatross-admin-2026');
+    function clearAuthKey() {
+      localStorage.removeItem('albatross_access_key');
       const input = document.getElementById('auth-key-input');
-      if (input) input.value = 'albatross-admin-2026';
+      if (input) input.value = '';
       closeAuthModal();
-      alert('Kunci akses dikembalikan ke default.');
+      loadDocumentsAndStatus();
+      alert('Kunci akses berhasil dihapus dari browser.');
     }
 
     // Load Documents and Status

@@ -104,7 +104,10 @@ function checkRateLimit(ip: string, action: string, maxReq: number, windowSec: n
 
 // Authentication Validator
 function checkAuth(request: Request, env: Env): boolean {
-  const secret = env.ADMIN_KEY || env.ACCESS_KEY || "albatross-admin-2026";
+  const secret = (env.ADMIN_KEY || env.ACCESS_KEY || "").trim();
+  if (!secret) {
+    return false;
+  }
   const authHeader = request.headers.get("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
   const queryToken = new URL(request.url).searchParams.get("key") || "";
