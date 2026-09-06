@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "albatross-rag",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "./static",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "OPUS_BASE_URL": "https://emtf.aipm9527.xyz/v1",
+    "OPUS_MODEL": "claude-opus-4.6",
+    "DEFAULT_MODEL": "opus"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
