@@ -1,0 +1,26 @@
+[
+  {
+    "id": "eval_01",
+    "question": "Berapa rasio solvabilitas perusahaan pada kuartal ketiga tahun 2024?",
+    "ground_truth_answer": "Rasio solvabilitas perusahaan pada kuartal ketiga 2024 adalah 1.45x, meningkat dari 1.20x pada periode sebelumnya.",
+    "ground_truth_keywords": ["1.45x", "solvabilitas", "kuartal ketiga", "2024"]
+  },
+  {
+    "id": "eval_02",
+    "question": "Berapa total liabilitas jangka panjang dan ekuitas perusahaan?",
+    "ground_truth_answer": "Total liabilitas jangka panjang adalah Rp 450 Miliar dan ekuitas tercatat Rp 650 Miliar.",
+    "ground_truth_keywords": ["450 Miliar", "650 Miliar", "liabilitas", "ekuitas"]
+  },
+  {
+    "id": "eval_03",
+    "question": "Kapan data pengguna wajib dihapus menurut Pasal 28 UU PDP?",
+    "ground_truth_answer": "Data pengguna wajib dihapus setelah 5 tahun masa retensi berakhir atau atas permintaan tertulis pemilik data.",
+    "ground_truth_keywords": ["Pasal 28", "5 tahun", "retensi", "permintaan tertulis"]
+  },
+  {
+    "id": "eval_04",
+    "question": "Berapa proyeksi laba bersih perusahaan untuk tahun 2025?",
+    "ground_truth_answer": "Informasi tidak ditemukan dalam dokumen yang tersedia.",
+    "ground_truth_keywords": ["tidak ditemukan", "tidak tersedia"]
+  }
+]

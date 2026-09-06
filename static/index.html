@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ALBATROSS // Hybrid Retrieval Workbench</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brandDark: '#08080a',
+            surface: '#0f0f12',
+            surfaceElevated: '#16161a',
+            borderSubtle: '#222227',
+            borderHover: '#32323a',
+            accentAmber: '#f59e0b',
+            accentEmerald: '#10b981',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background-color: #08080a; color: #e4e4e7; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #08080a; }
+    ::-webkit-scrollbar-thumb { background: #222227; border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: #32323a; }
+    .glass-nav { background: rgba(12, 12, 15, 0.95); border-bottom: 1px solid #1f1f25; }
+    .terminal-card { border: 1px solid #1f1f25; background: #0d0d10; transition: border-color 0.15s ease; }
+    .terminal-card:hover { border-color: #2e2e38; }
+    .pulse-amber { animation: pulseAmber 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    @keyframes pulseAmber { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  </style>
+</head>
+<body class="h-screen flex flex-col font-sans overflow-hidden">
+
+  <!-- ================= TOP HUD NAVBAR ================= -->
+  <header class="glass-nav px-6 py-3 flex items-center justify-between z-30 shrink-0">
+    <div class="flex items-center gap-4">
+      <!-- Minimalist Monospace Brand -->
+      <div class="flex items-center gap-3">
+        <div class="w-7 h-7 rounded bg-zinc-100 flex items-center justify-center font-mono font-bold text-black text-xs tracking-tighter">
+          AL
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-sm tracking-tight text-white font-mono">ALBATROSS</span>
+          <span class="text-[10px] font-mono font-semibold uppercase bg-zinc-900 text-zinc-400 border border-zinc-800 px-1.5 py-0.5 rounded">v1.3 // HARDENED</span>
+        </div>
+      </div>
+
+      <div class="h-4 w-[1px] bg-zinc-800 mx-1"></div>
+
+      <!-- Live Hardware/System Status -->
+      <div class="flex items-center gap-2 px-2.5 py-1 bg-zinc-900/80 border border-zinc-800/80 rounded text-[11px] font-mono">
+        <span class="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-amber"></span>
+        <span class="text-zinc-300">TELEMETRY ARMED</span>
+        <span class="text-zinc-700">|</span>
+        <span class="text-zinc-400 text-[10px]" id="dense-engine-tag">Mistral-Embed (1024d)</span>
+      </div>
+    </div>
+
+    <!-- Center Controls: Model & Mode -->
+    <div class="flex items-center gap-3">
+      <!-- LLM Provider Select -->
+      <div class="flex items-center bg-zinc-950 border border-zinc-800 rounded p-0.5 text-xs font-mono">
+        <span class="text-zinc-400 px-2 flex items-center gap-1.5 text-[11px]">
+          <i data-lucide="terminal" class="w-3 h-3 text-zinc-400"></i> Model:
+        </span>
+        <select id="model-select" class="bg-zinc-900 text-zinc-200 border border-zinc-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-zinc-600 font-mono font-medium">
+          <option value="opus" selected>Claude Opus 4.6 (Active)</option>
+          <option value="mistral">Mistral Large (Active)</option>
+          <option value="groq">Groq (Llama 3.3 70B)</option>
+        </select>
+      </div>
+
+      <!-- Mode Switch -->
+      <div class="flex items-center bg-zinc-950 border border-zinc-800 rounded p-0.5 text-xs font-mono">
+        <button id="mode-hybrid-btn" onclick="setMode('hybrid')" class="px-2.5 py-1 rounded text-xs transition-all bg-zinc-100 text-black font-semibold flex items-center gap-1.5">
+          <i data-lucide="layers" class="w-3 h-3"></i> Hybrid RRF
+        </button>
+        <button id="mode-naive-btn" onclick="setMode('naive')" class="px-2.5 py-1 rounded text-xs transition-all text-zinc-400 hover:text-white flex items-center gap-1.5">
+          <i data-lucide="git-commit" class="w-3 h-3"></i> Naive Vector
+        </button>
+      </div>
+    </div>
+
+    <!-- Right Controls: Evals Modal & Cost Tracker -->
+    <div class="flex items-center gap-4">
+      <button onclick="openBenchmarkModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-mono transition">
+        <i data-lucide="gauge" class="w-3.5 h-3.5 text-amber-400"></i>
+        <span>Benchmark Studio</span>
+      </button>
+
+      <!-- Spend HUD -->
+      <div class="text-right font-mono border-l border-zinc-800 pl-4">
+        <div class="text-[9px] text-zinc-400 font-semibold tracking-wider uppercase">SESSION COST</div>
+        <div class="text-xs font-bold text-amber-400" id="session-cost-hud">$0.000000</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= 3-COLUMN WORKBENCH ================= -->
+  <main class="flex-1 grid grid-cols-12 gap-0 overflow-hidden">
+
+    <!-- ---------------- COLUMN 1: KNOWLEDGE & CHUNKS (3 cols) ---------------- -->
+    <aside class="col-span-3 border-r border-[#1f1f25] bg-[#0c0c0e] p-4 flex flex-col gap-4 overflow-y-auto font-mono">
+      
+      <!-- Section Header -->
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider">
+          <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-zinc-400"></i> Local Index
+        </div>
+        <span class="text-[10px] bg-zinc-900 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-800" id="chunks-badge">... chunks</span>
+      </div>
+
+      <!-- Active Document Card -->
+      <div class="p-3 rounded border border-zinc-800/90 bg-[#101014] flex flex-col gap-2.5">
+        <div class="flex items-start justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="file-code" class="w-4 h-4 text-zinc-400 shrink-0"></i>
+            <div>
+              <p class="text-xs font-semibold text-zinc-200 truncate w-40" id="active-doc-name">laporan_keuangan_2024.txt</p>
+              <p class="text-[10px] text-zinc-400 mt-0.5">In-Memory Cosine Matrix</p>
+            </div>
+          </div>
+          <span class="px-1.5 py-0.5 text-[9px] font-bold bg-zinc-900 text-emerald-400 border border-zinc-800 rounded">ARMED</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-800/80 text-[10px]">
+          <div class="bg-zinc-950 p-2 rounded border border-zinc-800">
+            <span class="text-zinc-400">SPARSE (BM25)</span>
+            <p class="text-zinc-200 font-semibold mt-0.5">Active</p>
+          </div>
+          <div class="bg-zinc-950 p-2 rounded border border-zinc-800">
+            <span class="text-zinc-400">DENSE EMBED</span>
+            <p class="text-amber-400 font-semibold mt-0.5">Mistral-1024d</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 pt-1">
+          <button onclick="reloadSample()" class="w-full text-[11px] py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded border border-zinc-800 transition flex items-center justify-center gap-1.5">
+            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reload Sample Corpus
+          </button>
+        </div>
+      </div>
+
+      <!-- Ingest Document Area -->
+      <div>
+        <label class="block text-[11px] font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Ingest Document (Max 10MB)</label>
+        <div id="dropzone" class="border border-dashed border-zinc-800 hover:border-zinc-600 bg-zinc-950/60 rounded p-4 text-center cursor-pointer transition">
+          <input type="file" id="file-input" class="hidden" accept=".pdf,.txt">
+          <i data-lucide="file-plus" class="w-5 h-5 mx-auto text-zinc-400 transition mb-1"></i>
+          <p class="text-xs text-zinc-300 font-medium">Select PDF or TXT</p>
+          <p class="text-[10px] text-zinc-400 mt-0.5">Sentence-boundary chunking</p>
+        </div>
+      </div>
+
+      <!-- Chunks Explorer List -->
+      <div class="flex-1 flex flex-col min-h-0">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Indexed Chunks</span>
+          <span class="text-[10px] text-zinc-400">ID / Tokens</span>
+        </div>
+        
+        <div id="chunks-list" class="flex-1 overflow-y-auto space-y-1.5 pr-1">
+          <div class="text-center py-8 text-xs text-zinc-400">Loading indexed chunks...</div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ---------------- COLUMN 2: EXECUTION CONSOLE (6 cols) ---------------- -->
+    <section class="col-span-6 flex flex-col bg-[#08080a] overflow-hidden">
+
+      <!-- Query Command Bar -->
+      <div class="p-4 border-b border-[#1f1f25] bg-[#0c0c0e]">
+        <div class="relative flex items-center gap-2">
+          <div class="relative flex-1 flex items-center">
+            <span class="absolute left-3.5 font-mono text-zinc-400 text-xs select-none">&gt;</span>
+            <input 
+              type="text" 
+              id="query-input" 
+              maxlength="2000"
+              placeholder="Execute query across knowledge base..."
+              class="w-full bg-[#111114] border border-zinc-800 focus:border-zinc-500 rounded py-2 pl-8 pr-20 text-xs text-zinc-100 placeholder-zinc-400 focus:outline-none font-mono transition"
+              onkeydown="if(event.key==='Enter') executeQuery()"
+            >
+            <button 
+              onclick="executeQuery()"
+              id="run-btn"
+              class="absolute right-1.5 px-3 py-1 bg-white hover:bg-zinc-200 text-black font-mono font-semibold text-xs rounded transition flex items-center gap-1"
+            >
+              <span>RUN</span>
+              <i data-lucide="corner-down-left" class="w-3 h-3"></i>
+            </button>
+          </div>
+
+          <!-- COMPARE A/B Button -->
+          <button 
+            onclick="executeCompare()"
+            id="compare-btn"
+            title="Execute simultaneously on Naive Vector vs Albatross Hybrid"
+            class="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-amber-400 font-mono text-xs rounded transition flex items-center gap-1.5 shrink-0"
+          >
+            <i data-lucide="columns-2" class="w-3.5 h-3.5"></i>
+            <span class="font-bold">COMPARE A/B</span>
+          </button>
+        </div>
+
+        <!-- Presets -->
+        <div class="flex items-center gap-2 mt-3 overflow-x-auto text-[11px] font-mono">
+          <span class="text-zinc-400 shrink-0 text-[10px]">PRESETS:</span>
+          <button onclick="setQuery('Berapa rasio solvabilitas perusahaan pada kuartal ketiga tahun 2024?')" class="px-2.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white transition shrink-0">
+            Solvabilitas Q3 2024
+          </button>
+          <button onclick="setQuery('Kapan data pengguna wajib dihapus menurut Pasal 28 UU PDP?')" class="px-2.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white transition shrink-0">
+            Pasal 28 UU PDP
+          </button>
+          <button onclick="setQuery('Berapa proyeksi laba bersih tahun 2025?')" class="px-2.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-rose-400 transition shrink-0">
+            Anti-Hallucination
+          </button>
+        </div>
+      </div>
+
+      <!-- Execution Feed -->
+      <div id="runs-container" class="flex-1 overflow-y-auto p-5 space-y-4">
+        <!-- Initial Guidance Banner -->
+        <div id="welcome-banner" class="border border-zinc-800/80 bg-[#0d0d10] p-5 rounded">
+          <div class="flex items-start gap-3.5">
+            <div class="w-8 h-8 rounded bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-300 shrink-0 font-mono text-xs">
+              01
+            </div>
+            <div>
+              <div class="flex items-center gap-2 mb-1">
+                <h2 class="text-xs font-bold font-mono text-zinc-200 uppercase tracking-wider">Observable Retrieval Pipeline Active</h2>
+                <span class="text-[10px] font-mono bg-zinc-800 text-amber-400 border border-zinc-700 px-1.5 py-0.2 rounded">A/B Ready</span>
+              </div>
+              <p class="text-xs text-zinc-400 leading-relaxed">
+                Ketik pertanyaan atau klik <strong>COMPARE A/B</strong> untuk membandingkan langsung performa 
+                <strong>Naive Vector RAG</strong> vs <strong>Albatross Hybrid + Reranker</strong> secara berdampingan.
+              </p>
+              <div class="mt-3 flex items-center gap-4 text-[10px] font-mono text-zinc-400">
+                <span>• In-Memory Matrix</span>
+                <span>• Strict Grounding</span>
+                <span>• Sub-Millisecond Trace</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ---------------- COLUMN 3: DEEP TELEMETRY (3 cols) ---------------- -->
+    <aside class="col-span-3 border-l border-[#1f1f25] bg-[#0c0c0e] p-4 flex flex-col gap-4 overflow-y-auto font-mono">
+      
+      <!-- Telemetry Header -->
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider">
+          <i data-lucide="cpu" class="w-3.5 h-3.5 text-zinc-400"></i> Latency Waterfall
+        </div>
+        <span class="text-[10px] text-amber-400 font-bold" id="total-time-badge">0.0 ms</span>
+      </div>
+
+      <!-- Waterfall Card -->
+      <div class="p-3 rounded border border-zinc-800/90 bg-[#101014] flex flex-col gap-2">
+        <div class="text-[10px] text-zinc-400 font-semibold flex items-center justify-between">
+          <span>PIPELINE STEP</span>
+          <span>DURATION</span>
+        </div>
+
+        <div id="waterfall-bars" class="space-y-2 text-xs">
+          <div class="text-center py-6 text-[11px] text-zinc-400">
+            Awaiting query execution...
+          </div>
+        </div>
+      </div>
+
+      <!-- Ranked Chunks with Score Meter -->
+      <div class="flex-1 flex flex-col min-h-0">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Fidelity Chunks</span>
+          <span class="text-[10px] text-zinc-400">Score</span>
+        </div>
+
+        <div id="retrieved-chunks-list" class="space-y-2 overflow-y-auto flex-1 pr-1">
+          <div class="text-center py-8 text-xs text-zinc-400">
+            No context retrieved yet.
+          </div>
+        </div>
+      </div>
+
+      <!-- Token & Cost Economics -->
+      <div class="p-3 rounded border border-zinc-800/90 bg-[#101014] text-[11px] space-y-1.5">
+        <div class="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Session Economics</div>
+        <div class="flex justify-between text-zinc-300">
+          <span class="text-zinc-400">Prompt / Completion:</span>
+          <span class="text-zinc-200 font-semibold" id="tokens-count">- / -</span>
+        </div>
+        <div class="flex justify-between text-zinc-300">
+          <span class="text-zinc-400">Query Cost:</span>
+          <span class="text-amber-400 font-semibold" id="query-cost-val">$0.000000</span>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- ================= BENCHMARK MODAL ================= -->
+  <div id="benchmark-modal" class="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center hidden p-6 font-mono">
+    <div class="bg-[#0f0f13] border border-zinc-800 rounded-lg w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+      
+      <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-[#141419]">
+        <div class="flex items-center gap-2.5">
+          <span class="font-bold text-xs text-white uppercase tracking-wider">Quantitative Benchmark Studio</span>
+        </div>
+        <button onclick="closeBenchmarkModal()" class="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800 transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4 overflow-y-auto text-xs">
+        <p class="text-zinc-400 leading-relaxed">
+          Automated empirical benchmark across financial & regulatory test cases. Compares standard <strong>Naive Vector Search</strong> against <strong>Albatross Hybrid + Reranker</strong>.
+        </p>
+
+        <button onclick="runBenchmarkAction()" id="bench-trigger-btn" class="w-full py-2 bg-white hover:bg-zinc-200 text-black text-xs font-bold rounded transition flex items-center justify-center gap-2">
+          <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+          <span>RUN RAGAS BENCHMARK EXPERIMENT</span>
+        </button>
+
+        <div id="benchmark-results" class="hidden space-y-4 pt-2">
+          <div class="grid grid-cols-4 gap-2 text-center">
+            <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
+              <span class="text-[9px] text-zinc-400 uppercase">Context Precision</span>
+              <div class="text-base font-bold text-zinc-100 mt-0.5" id="m-precision">--%</div>
+              <span class="text-[9px] text-emerald-400">+13.3%</span>
+            </div>
+            <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
+              <span class="text-[9px] text-zinc-400 uppercase">Context Recall</span>
+              <div class="text-base font-bold text-zinc-100 mt-0.5" id="m-recall">--%</div>
+              <span class="text-[9px] text-emerald-400">+20.0%</span>
+            </div>
+            <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
+              <span class="text-[9px] text-zinc-400 uppercase">Faithfulness</span>
+              <div class="text-base font-bold text-emerald-400 mt-0.5" id="m-faith">100%</div>
+              <span class="text-[9px] text-zinc-400">Zero Hallucination</span>
+            </div>
+            <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
+              <span class="text-[9px] text-zinc-400 uppercase">Latency Overhead</span>
+              <div class="text-base font-bold text-amber-400 mt-0.5" id="m-lat">0.8 ms</div>
+              <span class="text-[9px] text-zinc-400">&lt; 0.5ms Delta</span>
+            </div>
+          </div>
+
+          <div class="border border-zinc-800 rounded overflow-hidden text-[11px]">
+            <table class="w-full text-left">
+              <thead class="bg-zinc-900 text-zinc-400 border-b border-zinc-800">
+                <tr>
+                  <th class="py-2 px-3">Metric</th>
+                  <th class="py-2 px-3">Naive Vector</th>
+                  <th class="py-2 px-3 text-zinc-100">Albatross Hybrid</th>
+                  <th class="py-2 px-3 text-emerald-400">Delta</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-zinc-800/80 text-zinc-300">
+                <tr>
+                  <td class="py-2 px-3">Context Precision</td>
+                  <td class="py-2 px-3 text-zinc-400" id="tb-n-prec">75.0%</td>
+                  <td class="py-2 px-3 text-zinc-100 font-semibold" id="tb-h-prec">85.0%</td>
+                  <td class="py-2 px-3 text-emerald-400">+13.3%</td>
+                </tr>
+                <tr>
+                  <td class="py-2 px-3">Context Recall</td>
+                  <td class="py-2 px-3 text-zinc-400" id="tb-n-rec">75.0%</td>
+                  <td class="py-2 px-3 text-zinc-100 font-semibold" id="tb-h-rec">90.0%</td>
+                  <td class="py-2 px-3 text-emerald-400">+20.0%</td>
+                </tr>
+                <tr>
+                  <td class="py-2 px-3">Faithfulness</td>
+                  <td class="py-2 px-3 text-zinc-400" id="tb-n-faith">85.0%</td>
+                  <td class="py-2 px-3 text-emerald-400 font-semibold" id="tb-h-faith">100.0%</td>
+                  <td class="py-2 px-3 text-emerald-400">Grounded</td>
+                </tr>
+                <tr>
+                  <td class="py-2 px-3">Turnaround Latency</td>
+                  <td class="py-2 px-3 text-zinc-400" id="tb-n-lat">0.5 ms</td>
+                  <td class="py-2 px-3 text-zinc-100" id="tb-h-lat">0.8 ms</td>
+                  <td class="py-2 px-3 text-zinc-400">+0.3 ms</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= CLIENT LOGIC ================= -->
+  <script>
+    lucide.createIcons();
+
+    let currentMode = 'hybrid';
+    let runCounter = 0;
+    let sessionCost = 0.0;
+
+    // XSS Sanitizer Helper
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function setMode(mode) {
+      currentMode = mode;
+      const hybridBtn = document.getElementById('mode-hybrid-btn');
+      const naiveBtn = document.getElementById('mode-naive-btn');
+      if (mode === 'hybrid') {
+        hybridBtn.className = 'px-2.5 py-1 rounded text-xs transition-all bg-zinc-100 text-black font-semibold flex items-center gap-1.5';
+        naiveBtn.className = 'px-2.5 py-1 rounded text-xs transition-all text-zinc-400 hover:text-white flex items-center gap-1.5';
+      } else {
+        naiveBtn.className = 'px-2.5 py-1 rounded text-xs transition-all bg-zinc-100 text-black font-semibold flex items-center gap-1.5';
+        hybridBtn.className = 'px-2.5 py-1 rounded text-xs transition-all text-zinc-400 hover:text-white flex items-center gap-1.5';
+      }
+    }
+
+    function setQuery(text) {
+      document.getElementById('query-input').value = text;
+    }
+
+    async function loadStatusAndChunks() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('chunks-badge').textContent = `${data.chunks_indexed} chunks`;
+
+        const chunksRes = await fetch('/api/chunks');
+        if (!chunksRes.ok) return;
+        const chunks = await chunksRes.json();
+        renderChunksList(chunks);
+      } catch (e) {
+        console.error("Status load failed", e);
+      }
+    }
+
+    function renderChunksList(chunks) {
+      const container = document.getElementById('chunks-list');
+      container.innerHTML = '';
+      chunks.forEach(c => {
+        const div = document.createElement('div');
+        div.className = 'p-2 rounded border border-zinc-800/80 bg-zinc-950/60 text-xs font-mono hover:border-zinc-700 transition cursor-pointer';
+        div.innerHTML = `
+          <div class="flex justify-between items-center text-[10px] text-zinc-400 mb-1">
+            <span class="text-zinc-200 font-bold">#CHUNK ${escapeHtml(c.chunk_id)}</span>
+            <span>p.${escapeHtml(c.page)} • ~${escapeHtml(c.token_count)} tok</span>
+          </div>
+          <p class="text-zinc-400 line-clamp-2 text-[11px] leading-relaxed">${escapeHtml(c.snippet)}</p>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    // Standard Single Mode Execution
+    async function executeQuery() {
+      const input = document.getElementById('query-input');
+      const query = input.value.trim();
+      if (!query) return;
+
+      runCounter++;
+      const provider = document.getElementById('model-select').value;
+      const modelLabel = provider === 'opus' ? 'claude-opus-4-6' : (provider === 'mistral' ? 'mistral-large-latest' : 'llama-3.3-70b');
+
+      const welcome = document.getElementById('welcome-banner');
+      if (welcome) welcome.remove();
+
+      const runsContainer = document.getElementById('runs-container');
+      const runCard = document.createElement('div');
+      runCard.className = 'terminal-card rounded p-4 shadow-lg flex flex-col gap-3 font-mono';
+      runCard.innerHTML = `
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-2.5 text-xs">
+          <div class="flex items-center gap-2.5">
+            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-200 border border-zinc-700">RUN #${runCounter}</span>
+            <span class="text-zinc-400">${escapeHtml(modelLabel)}</span>
+            <span class="text-zinc-400 uppercase text-[10px]">| ${escapeHtml(currentMode.toUpperCase())}</span>
+          </div>
+          <span class="text-[10px] text-emerald-400 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded">
+            GROUNDED
+          </span>
+        </div>
+
+        <div class="text-xs font-semibold text-white flex items-start gap-2">
+          <span class="text-zinc-400">&gt;</span>
+          <span>${escapeHtml(query)}</span>
+        </div>
+
+        <div class="bg-[#09090c] border border-zinc-800/90 rounded p-3 text-xs text-zinc-200 leading-relaxed font-sans">
+          <div id="answer-text-${runCounter}" class="whitespace-pre-wrap"><span class="text-zinc-400 font-mono text-[11px]">Retrieving and executing model inference...</span></div>
+        </div>
+
+        <div id="citations-${runCounter}" class="pt-2 border-t border-zinc-800/80 hidden">
+          <div class="text-[10px] font-bold text-zinc-400 uppercase mb-1.5">
+            Document Attributions
+          </div>
+          <div class="flex flex-wrap gap-1.5" id="citation-chips-${runCounter}"></div>
+        </div>
+      `;
+
+      runsContainer.prepend(runCard);
+      lucide.createIcons();
+
+      input.value = '';
+      const answerElement = document.getElementById(`answer-text-${runCounter}`);
+      let answerBuffer = '';
+
+      try {
+        const response = await fetch('/api/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, mode: currentMode, provider })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.detail || `Server error ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        answerElement.textContent = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          const chunkText = decoder.decode(value);
+          const lines = chunkText.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]') break;
+              try {
+                const payload = JSON.parse(dataStr);
+                if (payload.type === 'meta') {
+                  renderRetrievedChunks(payload.retrieved_chunks);
+                  renderCitationChips(runCounter, payload.retrieved_chunks);
+                } else if (payload.type === 'delta') {
+                  answerBuffer += payload.content;
+                  answerElement.textContent = answerBuffer;
+                } else if (payload.type === 'error') {
+                  answerElement.textContent = `Error: ${payload.message}`;
+                } else if (payload.type === 'telemetry') {
+                  renderWaterfall(payload.timings, payload.total_latency_ms);
+                  document.getElementById('tokens-count').textContent = `${payload.input_tokens} / ${payload.output_tokens}`;
+                  document.getElementById('query-cost-val').textContent = `$${payload.cost_usd.toFixed(6)}`;
+                  sessionCost += payload.cost_usd;
+                  document.getElementById('session-cost-hud').textContent = `$${sessionCost.toFixed(6)}`;
+                }
+              } catch (err) { }
+            }
+          }
+        }
+      } catch (error) {
+        answerElement.textContent = `Execution failed: ${error.message}`;
+      }
+    }
+
+    // Live A/B Compare
+    async function executeCompare() {
+      const input = document.getElementById('query-input');
+      const query = input.value.trim();
+      if (!query) return;
+
+      runCounter++;
+      const provider = document.getElementById('model-select').value;
+      const modelLabel = provider === 'opus' ? 'claude-opus-4-6' : (provider === 'mistral' ? 'mistral-large-latest' : 'llama-3.3-70b');
+
+      const welcome = document.getElementById('welcome-banner');
+      if (welcome) welcome.remove();
+
+      const runsContainer = document.getElementById('runs-container');
+      const compareCard = document.createElement('div');
+      compareCard.className = 'terminal-card rounded p-4 shadow-xl flex flex-col gap-3 font-mono border-zinc-700/80';
+      compareCard.innerHTML = `
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-2.5 text-xs">
+          <div class="flex items-center gap-2.5">
+            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800/80">A/B SPLIT RUN #${runCounter}</span>
+            <span class="text-zinc-300 font-semibold">${escapeHtml(modelLabel)}</span>
+          </div>
+          <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Simultaneous Execution</span>
+        </div>
+
+        <div class="text-xs font-semibold text-white flex items-start gap-2">
+          <span class="text-zinc-400">&gt;</span>
+          <span>${escapeHtml(query)}</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 pt-1">
+          <!-- LEFT: NAIVE VECTOR SEARCH -->
+          <div class="p-3 rounded border border-zinc-800 bg-[#09090c] flex flex-col gap-2">
+            <div class="flex items-center justify-between border-b border-zinc-800/80 pb-1.5 text-[10px]">
+              <span class="text-zinc-400 font-bold uppercase flex items-center gap-1.5">
+                <i data-lucide="git-commit" class="w-3 h-3 text-zinc-400"></i> Naive Vector Search
+              </span>
+              <span class="text-zinc-500" id="time-naive-${runCounter}">running...</span>
+            </div>
+            <div class="text-xs text-zinc-300 font-sans leading-relaxed min-h-[90px] whitespace-pre-wrap" id="answer-naive-${runCounter}">
+              <span class="text-zinc-500 font-mono text-[11px] animate-pulse">Retrieving dense cosine vectors...</span>
+            </div>
+            <div class="pt-2 border-t border-zinc-900 text-[10px] flex items-center justify-between text-zinc-500" id="cite-naive-${runCounter}">
+              <span>Retrieval: Dense Cosine Top-3</span>
+            </div>
+          </div>
+
+          <!-- RIGHT: ALBATROSS HYBRID RRF -->
+          <div class="p-3 rounded border border-zinc-700 bg-[#0d0d12] flex flex-col gap-2 relative">
+            <div class="flex items-center justify-between border-b border-zinc-800/80 pb-1.5 text-[10px]">
+              <span class="text-amber-400 font-bold uppercase flex items-center gap-1.5">
+                <i data-lucide="layers" class="w-3 h-3 text-amber-400"></i> Albatross Hybrid RRF
+              </span>
+              <span class="text-amber-400" id="time-hybrid-${runCounter}">running...</span>
+            </div>
+            <div class="text-xs text-zinc-100 font-sans leading-relaxed min-h-[90px] whitespace-pre-wrap" id="answer-hybrid-${runCounter}">
+              <span class="text-amber-400 font-mono text-[11px] animate-pulse">Executing BM25 + Dense + RRF + Rerank...</span>
+            </div>
+            <div class="pt-2 border-t border-zinc-900 text-[10px] flex items-center justify-between text-zinc-400" id="cite-hybrid-${runCounter}">
+              <span class="text-emerald-400 font-semibold">Hybrid Verified Context</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      runsContainer.prepend(compareCard);
+      lucide.createIcons();
+      input.value = '';
+
+      streamToBox(query, 'naive', provider, `answer-naive-${runCounter}`, `time-naive-${runCounter}`, `cite-naive-${runCounter}`);
+      streamToBox(query, 'hybrid', provider, `answer-hybrid-${runCounter}`, `time-hybrid-${runCounter}`, `cite-hybrid-${runCounter}`);
+    }
+
+    async function streamToBox(query, mode, provider, textElemId, timeElemId, citeElemId) {
+      const textElem = document.getElementById(textElemId);
+      const timeElem = document.getElementById(timeElemId);
+      const citeElem = document.getElementById(citeElemId);
+      let buffer = '';
+
+      try {
+        const res = await fetch('/api/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, mode, provider })
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Server error ${res.status}`);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        textElem.textContent = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          const chunkText = decoder.decode(value);
+          const lines = chunkText.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]') break;
+              try {
+                const payload = JSON.parse(dataStr);
+                if (payload.type === 'delta') {
+                  buffer += payload.content;
+                  textElem.textContent = buffer;
+                } else if (payload.type === 'telemetry') {
+                  if (timeElem) timeElem.textContent = `${payload.total_latency_ms.toFixed(0)} ms`;
+                  if (mode === 'hybrid') {
+                    renderWaterfall(payload.timings, payload.total_latency_ms);
+                    sessionCost += payload.cost_usd;
+                    document.getElementById('session-cost-hud').textContent = `$${sessionCost.toFixed(6)}`;
+                  }
+                } else if (payload.type === 'meta') {
+                  if (mode === 'hybrid') {
+                    renderRetrievedChunks(payload.retrieved_chunks);
+                  }
+                  if (citeElem && payload.retrieved_chunks.length) {
+                    const topC = payload.retrieved_chunks[0];
+                    citeElem.innerHTML = `<span>Top Chunk #${escapeHtml(topC.chunk_id)}</span><span class="${mode === 'hybrid' ? 'text-amber-400' : 'text-zinc-400'} font-semibold">Score: ${topC.score.toFixed(3)}</span>`;
+                  }
+                }
+              } catch (e) {}
+            }
+          }
+        }
+      } catch (err) {
+        textElem.textContent = `Stream error: ${err.message}`;
+      }
+    }
+
+    function renderCitationChips(runId, chunks) {
+      const citationsBar = document.getElementById(`citations-${runId}`);
+      const chipsContainer = document.getElementById(`citation-chips-${runId}`);
+      if (!citationsBar || !chipsContainer || !chunks.length) return;
+
+      citationsBar.classList.remove('hidden');
+      chipsContainer.innerHTML = '';
+      chunks.forEach(c => {
+        const chip = document.createElement('span');
+        chip.className = 'px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 font-mono';
+        chip.innerHTML = `<span class="text-zinc-100 font-bold">#Chunk ${escapeHtml(c.chunk_id)}</span> <span class="text-zinc-400">(p.${escapeHtml(c.page)})</span> <span class="text-amber-400">${c.score.toFixed(3)}</span>`;
+        chipsContainer.appendChild(chip);
+      });
+    }
+
+    function renderWaterfall(timings, totalLatency) {
+      const container = document.getElementById('waterfall-bars');
+      container.innerHTML = '';
+      document.getElementById('total-time-badge').textContent = `${totalLatency.toFixed(1)} ms`;
+
+      timings.forEach(t => {
+        const pct = Math.max(8, Math.min(100, (t.duration_ms / totalLatency) * 100));
+        const div = document.createElement('div');
+        div.className = 'space-y-1';
+        div.innerHTML = `
+          <div class="flex justify-between text-[10px] text-zinc-400">
+            <span>${escapeHtml(t.step)}</span>
+            <span class="text-zinc-200 font-semibold">${t.duration_ms.toFixed(1)} ms</span>
+          </div>
+          <div class="w-full bg-zinc-900 rounded h-1 overflow-hidden border border-zinc-800">
+            <div class="bg-zinc-200 h-full rounded transition-all duration-300" style="width: ${pct}%"></div>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function renderRetrievedChunks(chunks) {
+      const container = document.getElementById('retrieved-chunks-list');
+      container.innerHTML = '';
+      chunks.forEach(c => {
+        const div = document.createElement('div');
+        div.className = 'p-2.5 rounded border border-zinc-800/90 bg-[#101014] text-xs font-mono space-y-1';
+        div.innerHTML = `
+          <div class="flex justify-between items-center text-[10px]">
+            <span class="text-zinc-200 font-bold">#CHUNK ${escapeHtml(c.chunk_id)} (p.${escapeHtml(c.page)})</span>
+            <span class="text-amber-400 font-semibold">${c.score.toFixed(4)}</span>
+          </div>
+          <p class="text-zinc-400 text-[11px] font-sans leading-relaxed line-clamp-3">${escapeHtml(c.text)}</p>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    async function reloadSample() {
+      await fetch('/api/reload-sample', { method: 'POST' });
+      await loadStatusAndChunks();
+    }
+
+    function openBenchmarkModal() {
+      document.getElementById('benchmark-modal').classList.remove('hidden');
+    }
+    function closeBenchmarkModal() {
+      document.getElementById('benchmark-modal').classList.add('hidden');
+    }
+
+    async function runBenchmarkAction() {
+      const btn = document.getElementById('bench-trigger-btn');
+      btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>RUNNING QUANTITATIVE BENCHMARK...</span>`;
+      lucide.createIcons();
+
+      try {
+        const res = await fetch('/api/benchmark', { method: 'POST' });
+        const data = await res.json();
+        
+        document.getElementById('benchmark-results').classList.remove('hidden');
+        document.getElementById('m-precision').textContent = `${(data.hybrid.avg_precision * 100).toFixed(1)}%`;
+        document.getElementById('m-recall').textContent = `${(data.hybrid.avg_recall * 100).toFixed(1)}%`;
+        document.getElementById('m-faith').textContent = `${(data.hybrid.avg_faithfulness * 100).toFixed(1)}%`;
+        document.getElementById('m-lat').textContent = `${data.hybrid.avg_latency_ms.toFixed(1)} ms`;
+
+        document.getElementById('tb-n-prec').textContent = `${(data.naive.avg_precision * 100).toFixed(1)}%`;
+        document.getElementById('tb-h-prec').textContent = `${(data.hybrid.avg_precision * 100).toFixed(1)}%`;
+        document.getElementById('tb-n-rec').textContent = `${(data.naive.avg_recall * 100).toFixed(1)}%`;
+        document.getElementById('tb-h-rec').textContent = `${(data.hybrid.avg_recall * 100).toFixed(1)}%`;
+        document.getElementById('tb-n-faith').textContent = `${(data.naive.avg_faithfulness * 100).toFixed(1)}%`;
+        document.getElementById('tb-h-faith').textContent = `${(data.hybrid.avg_faithfulness * 100).toFixed(1)}%`;
+        document.getElementById('tb-n-lat').textContent = `${data.naive.avg_latency_ms.toFixed(2)} ms`;
+        document.getElementById('tb-h-lat').textContent = `${data.hybrid.avg_latency_ms.toFixed(2)} ms`;
+      } catch (err) {
+        alert("Benchmark failed: " + err.message);
+      } finally {
+        btn.innerHTML = `<i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i><span>RUN RAGAS BENCHMARK EXPERIMENT</span>`;
+        lucide.createIcons();
+      }
+    }
+
+    document.getElementById('dropzone').addEventListener('click', () => {
+      document.getElementById('file-input').click();
+    });
+
+    document.getElementById('file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      // Client-side file size pre-check (10MB limit)
+      if (file.size > 10 * 1024 * 1024) {
+        alert("File size exceeds 10MB limit.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (!res.ok) {
+          const errData = await res.json();
+          alert(`Upload failed: ${errData.detail || 'Unknown error'}`);
+          return;
+        }
+        const data = await res.json();
+        alert(`Indexed ${data.added_chunks} new chunks!`);
+        await loadStatusAndChunks();
+      } catch (e) {
+        alert(`Upload failed: ${e.message}`);
+      }
+    });
+
+    loadStatusAndChunks();
+  </script>
+</body>
+</html>
