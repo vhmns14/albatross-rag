@@ -20,6 +20,8 @@
 
   <!-- Marked.js for Beautiful Markdown & List Rendering -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
+  <!-- DOMPurify for Stored & Reflected XSS Sanitization -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.2/purify.min.js"></script>
 
   <script>
     tailwind.config = {
@@ -99,6 +101,12 @@
       <button onclick="openBenchmarkModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 transition">
         <i data-lucide="gauge" class="w-3.5 h-3.5 text-amber-400"></i>
         <span class="hidden sm:inline">Benchmark RAGAS</span>
+      </button>
+
+      <!-- Auth Key Modal Button -->
+      <button onclick="openAuthModal()" id="auth-header-btn" class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 transition" title="Kunci Akses Admin (Bearer Auth)">
+        <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i>
+        <span class="hidden sm:inline">Kunci Akses</span>
       </button>
 
       <!-- Spend HUD -->
@@ -350,6 +358,40 @@
     </div>
   </div>
 
+  <!-- ================= MODAL: AUTH KEY SETTINGS ================= -->
+  <div id="auth-modal" class="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center hidden p-6 font-mono">
+    <div class="bg-[#121216] border border-zinc-800 rounded-xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col">
+      <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <span class="font-bold text-xs text-white uppercase tracking-wider flex items-center gap-2">
+          <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
+          Kunci Akses Admin (Bearer)
+        </span>
+        <button onclick="closeAuthModal()" class="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800 transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="p-5 space-y-4 text-xs font-sans">
+        <p class="text-zinc-400 text-xs leading-relaxed">
+          Semua endpoint destruktif (Upload, Hapus, Kosongkan, Benchmark) serta inspeksi teks penuh chunk dilindungi oleh Bearer Authorization. Masukkan kunci rahasia Anda di bawah.
+        </p>
+        <div class="space-y-1.5 font-mono">
+          <label class="text-[11px] text-zinc-400">Admin Secret Key:</label>
+          <input type="password" id="auth-key-input" class="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500 rounded-lg px-3 py-2 text-xs text-white outline-none transition" placeholder="albatross-admin-2026">
+          <p class="text-[10px] text-zinc-500">Default: <code class="text-emerald-400">albatross-admin-2026</code> (dapat diubah via Cloudflare Secrets: <code>ADMIN_KEY</code>)</p>
+        </div>
+        <div class="flex gap-2 pt-2 font-mono">
+          <button onclick="saveAuthKeyAction()" class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition flex items-center justify-center gap-1.5">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            <span>Simpan Kunci</span>
+          </button>
+          <button onclick="resetAuthKeyDefault()" class="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs rounded-lg border border-zinc-800 transition">
+            Reset Default
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ================= JAVASCRIPT LOGIC ================= -->
   <script>
     let currentMode = 'hybrid';
@@ -419,13 +461,61 @@
       input.focus();
     }
 
+    function getAuthToken() {
+      return localStorage.getItem('albatross_access_key') || 'albatross-admin-2026';
+    }
+
+    function setAuthToken(token) {
+      if (token) {
+        localStorage.setItem('albatross_access_key', token.trim());
+      } else {
+        localStorage.removeItem('albatross_access_key');
+      }
+      loadDocumentsAndStatus();
+    }
+
+    function getAuthHeaders(extra = {}) {
+      const token = getAuthToken();
+      const headers = { ...extra };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      return headers;
+    }
+
+    function openAuthModal() {
+      const modal = document.getElementById('auth-modal');
+      const input = document.getElementById('auth-key-input');
+      input.value = getAuthToken();
+      modal.classList.remove('hidden');
+    }
+
+    function closeAuthModal() {
+      document.getElementById('auth-modal').classList.add('hidden');
+    }
+
+    function saveAuthKeyAction() {
+      const input = document.getElementById('auth-key-input');
+      setAuthToken(input.value);
+      closeAuthModal();
+      alert('Kunci akses berhasil disimpan.');
+    }
+
+    function resetAuthKeyDefault() {
+      setAuthToken('albatross-admin-2026');
+      const input = document.getElementById('auth-key-input');
+      if (input) input.value = 'albatross-admin-2026';
+      closeAuthModal();
+      alert('Kunci akses dikembalikan ke default.');
+    }
+
     // Load Documents and Status
     async function loadDocumentsAndStatus() {
       try {
         const [statusRes, docsRes, chunksRes] = await Promise.all([
-          fetch('/api/status'),
-          fetch('/api/documents'),
-          fetch('/api/chunks')
+          fetch('/api/status', { headers: getAuthHeaders() }),
+          fetch('/api/documents', { headers: getAuthHeaders() }),
+          fetch('/api/chunks', { headers: getAuthHeaders() })
         ]);
 
         if (statusRes.ok) {
@@ -433,6 +523,21 @@
           document.getElementById('header-chunks-count').textContent = `${s.chunks_indexed} chunks`;
           document.getElementById('chunks-sub-badge').textContent = s.chunks_indexed;
           document.getElementById('modal-chunks-count').textContent = s.chunks_indexed;
+          if (s.total_cost_usd !== undefined) {
+            document.getElementById('session-cost-hud').textContent = `$${s.total_cost_usd.toFixed(6)}`;
+          } else {
+            document.getElementById('session-cost-hud').textContent = '--';
+          }
+          const authBtn = document.getElementById('auth-header-btn');
+          if (authBtn) {
+            if (s.authenticated) {
+              authBtn.classList.remove('border-rose-900', 'text-rose-400');
+              authBtn.classList.add('border-emerald-800/80', 'text-emerald-400');
+            } else {
+              authBtn.classList.remove('border-emerald-800/80', 'text-emerald-400');
+              authBtn.classList.add('border-rose-900', 'text-rose-400');
+            }
+          }
         }
 
         if (docsRes.ok) {
@@ -543,11 +648,14 @@
       try {
         const res = await fetch('/api/documents/delete', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ name: docName })
         });
         if (res.ok) {
           await loadDocumentsAndStatus();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          alert("Gagal menghapus dokumen: " + (errData.error || errData.detail || res.statusText));
         }
       } catch (err) {
         alert("Gagal menghapus dokumen: " + err.message);
@@ -558,9 +666,15 @@
     async function confirmClearAll() {
       if (!confirm("Kosongkan seluruh knowledge base? Semua chunks akan dihapus.")) return;
       try {
-        const res = await fetch('/api/documents/clear', { method: 'POST' });
+        const res = await fetch('/api/documents/clear', { 
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           await loadDocumentsAndStatus();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          alert("Gagal mengosongkan knowledge base: " + (errData.error || errData.detail || res.statusText));
         }
       } catch (err) {
         alert("Gagal mengosongkan knowledge base: " + err.message);
@@ -570,9 +684,15 @@
     // Reload demo sample corpus
     async function reloadSample() {
       try {
-        const res = await fetch('/api/reload-sample', { method: 'POST' });
+        const res = await fetch('/api/reload-sample', { 
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           await loadDocumentsAndStatus();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          alert("Gagal memuat demo: " + (errData.error || errData.detail || res.statusText));
         }
       } catch (err) {
         alert("Gagal memuat demo: " + err.message);
@@ -686,9 +806,14 @@
       try {
         const response = await fetch('/api/query', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ query, mode: currentMode, provider })
         });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || errData.detail || `Server returned HTTP ${response.status}`);
+        }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -734,11 +859,12 @@
                   }
                 }
 
-                // 2. Delta Event (Streaming Tokens with Markdown formatting)
+                // 2. Delta Event (Streaming Tokens with Markdown formatting & XSS Sanitization)
                 if (event.type === 'delta') {
                   fullAnswerText += event.content;
                   if (typeof marked !== 'undefined') {
-                    answerDiv.innerHTML = marked.parse(fullAnswerText);
+                    const parsed = marked.parse(fullAnswerText);
+                    answerDiv.innerHTML = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(parsed) : parsed;
                   } else {
                     answerDiv.textContent = fullAnswerText;
                   }
@@ -873,9 +999,14 @@
         try {
           const res = await fetch('/api/query', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ query, mode, provider: 'cf-llama' })
           });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || errData.detail || `Server returned HTTP ${res.status}`);
+          }
 
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
@@ -899,7 +1030,8 @@
                   if (ev.type === 'delta') {
                     fullText += ev.content;
                     if (typeof marked !== 'undefined') {
-                      answerDiv.innerHTML = marked.parse(fullText);
+                      const parsed = marked.parse(fullText);
+                      answerDiv.innerHTML = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(parsed) : parsed;
                     } else {
                       answerDiv.textContent = fullText;
                     }
@@ -913,7 +1045,7 @@
             }
           }
         } catch (e) {
-          answerDiv.innerHTML = `<span class="text-rose-400">Error: ${e.message}</span>`;
+          answerDiv.innerHTML = `<span class="text-rose-400">Error: ${escapeHtml(e.message)}</span>`;
         }
       }
 
@@ -1021,14 +1153,15 @@
 
         const res = await fetch('/api/upload', {
           method: 'POST',
+          headers: getAuthHeaders(),
           body: formData
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (res.ok) {
           alert(`Sukses mengunggah "${file.name}"!\nSebanyak ${data.added_chunks} chunks berhasil diekstrak dan diindeks secara bersih.`);
           await loadDocumentsAndStatus();
         } else {
-          alert(`Upload gagal: ${data.detail || 'Error'}`);
+          alert(`Upload gagal: ${data.error || data.detail || res.statusText}`);
         }
       } catch (err) {
         alert(`Gagal memproses file: ${err.message}`);
@@ -1054,9 +1187,14 @@
       btn.innerHTML = `<span class="animate-spin mr-2">⚙️</span> Mengevaluasi dataset benchmark...`;
 
       try {
-        const res = await fetch('/api/benchmark', { method: 'POST' });
-        if (!res.ok) throw new Error("Gagal menjalankan benchmark");
-        const data = await res.json();
+        const res = await fetch('/api/benchmark', { 
+          method: 'POST',
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || data.detail || `Server returned HTTP ${res.status}`);
+        }
 
         document.getElementById('benchmark-results').classList.remove('hidden');
         document.getElementById('m-precision').textContent = `${Math.round(data.average_precision * 100)}%`;

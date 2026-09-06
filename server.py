@@ -9,7 +9,7 @@ import time
 import json
 import tempfile
 from typing import Optional, List, Literal
-from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Header, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +27,45 @@ from evals.benchmark import run_benchmark, SAMPLE_CORPUS
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".txt"}
 
+ADMIN_KEY = os.getenv("ADMIN_KEY", os.getenv("ACCESS_KEY", "albatross-admin-2026"))
+
+# Rate Limiter in-memory store
+rate_limit_store = {}
+
+def check_rate_limit(ip: str, action: str, max_req: int, window_sec: int) -> tuple[bool, int]:
+    now = time.time()
+    key = f"{ip}:{action}"
+    record = rate_limit_store.get(key)
+
+    if len(rate_limit_store) > 2000:
+        expired = [k for k, v in rate_limit_store.items() if now > v["reset_at"]]
+        for k in expired:
+            del rate_limit_store[k]
+
+    if not record or now > record["reset_at"]:
+        rate_limit_store[key] = {"count": 1, "reset_at": now + window_sec}
+        return True, 0
+
+    if record["count"] >= max_req:
+        retry_after = int(record["reset_at"] - now) + 1
+        return False, retry_after
+
+    record["count"] += 1
+    return True, 0
+
+def check_auth(authorization: Optional[str] = None) -> bool:
+    if not authorization:
+        return False
+    token = authorization.replace("Bearer ", "").replace("bearer ", "").strip()
+    return token == ADMIN_KEY
+
+def require_auth(authorization: Optional[str] = None):
+    if not check_auth(authorization):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Akses ditolak: Dibutuhkan Authorization Bearer token."
+        )
+
 app = FastAPI(
     title="Albatross RAG Studio API",
     version="1.3.1",
@@ -34,14 +73,22 @@ app = FastAPI(
     redoc_url=None
 )
 
-# Safe CORS: Disallow wildcard credentials
+# Safe CORS: Restrict to same-origin / localhost
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 # Global in-memory engine and session stats
 engine = AlbatrossEngine(chunk_size=1000, chunk_overlap=150)
@@ -67,30 +114,37 @@ async def serve_index():
     return HTMLResponse("<h1>Albatross RAG API is live</h1>")
 
 @app.get("/api/status")
-async def get_status():
-    return {
+async def get_status(authorization: Optional[str] = Header(None)):
+    is_authed = check_auth(authorization)
+    data = {
         "status": "online",
         "chunks_indexed": len(engine.chunks),
         "embedding_model": "mistral-embed" if os.getenv("MISTRAL_API_KEY") else "local-hash-cpu",
         "default_model": os.getenv("DEFAULT_MODEL", "opus"),
         "total_queries": session_stats["total_queries"],
-        "total_cost_usd": round(session_stats["total_cost_usd"], 6),
         "uptime_seconds": int(time.time() - session_stats["start_time"]),
+        "authenticated": is_authed,
     }
+    if is_authed:
+        data["total_cost_usd"] = round(session_stats["total_cost_usd"], 6)
+    return data
 
 @app.get("/api/chunks")
-async def get_chunks():
-    return [
-        {
+async def get_chunks(authorization: Optional[str] = Header(None)):
+    is_authed = check_auth(authorization)
+    result = []
+    for c in engine.chunks:
+        item = {
             "chunk_id": c.chunk_id,
             "source": c.source,
             "page": c.page,
             "token_count": c.token_count,
             "snippet": c.text[:200] + ("..." if len(c.text) > 200 else ""),
-            "full_text": c.text,
         }
-        for c in engine.chunks
-    ]
+        if is_authed:
+            item["full_text"] = c.text
+        result.append(item)
+    return result
 
 @app.get("/api/documents")
 async def get_documents():
@@ -110,7 +164,8 @@ async def get_documents():
     ]
 
 @app.post("/api/documents/clear")
-async def clear_documents():
+async def clear_documents(authorization: Optional[str] = Header(None)):
+    require_auth(authorization)
     engine.clear()
     return {"status": "success", "message": "Knowledge base cleared", "chunks_count": 0}
 
@@ -118,13 +173,29 @@ class DeleteDocRequest(BaseModel):
     name: str
 
 @app.post("/api/documents/delete")
-async def delete_document_endpoint(req: DeleteDocRequest):
+async def delete_document_endpoint(req: DeleteDocRequest, authorization: Optional[str] = Header(None)):
+    require_auth(authorization)
     remaining = engine.delete_document(req.name)
     return {"status": "success", "remaining_chunks": remaining}
 
 
 @app.post("/api/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(None)
+):
+    require_auth(authorization)
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    allowed, retry_after = check_rate_limit(client_ip, "upload", 6, 60)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Terlalu banyak permintaan unggah. Coba lagi dalam {retry_after} detik.",
+            headers={"Retry-After": str(retry_after)}
+        )
+
     # 1. Validate filename presence and extension
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename missing.")
@@ -179,7 +250,8 @@ async def upload_document(file: UploadFile = File(...)):
     return {"status": "success", "added_chunks": count, "total_chunks": len(engine.chunks)}
 
 @app.post("/api/reload-sample")
-async def reload_sample():
+async def reload_sample(authorization: Optional[str] = Header(None)):
+    require_auth(authorization)
     engine.clear()
     count = engine.load_text(SAMPLE_CORPUS, source_name="laporan_keuangan_2024.txt")
     return {"status": "success", "total_chunks": count}
@@ -190,8 +262,22 @@ class QueryRequest(BaseModel):
     provider: Literal["opus", "mistral", "groq"] = "opus"
 
 @app.post("/api/query")
-async def execute_query(req: QueryRequest):
+async def execute_query(
+    req: QueryRequest,
+    request: Request,
+    authorization: Optional[str] = Header(None)
+):
     """Execute retrieval + streaming LLM generation via Server-Sent Events (SSE)."""
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    allowed, retry_after = check_rate_limit(client_ip, "query", 15, 60)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Terlalu banyak permintaan query. Mohon tunggu {retry_after} detik.",
+            headers={"Retry-After": str(retry_after)}
+        )
+
+    is_authed = check_auth(authorization)
     sanitized_query = req.query.strip()
     if not sanitized_query:
         raise HTTPException(status_code=400, detail="Query cannot be empty or whitespace.")
@@ -256,9 +342,11 @@ async def execute_query(req: QueryRequest):
                 "total_latency_ms": round(telemetry.total_latency_ms, 2),
                 "input_tokens": telemetry.input_tokens,
                 "output_tokens": telemetry.output_tokens,
-                "cost_usd": cost,
-                "total_session_cost": round(session_stats["total_cost_usd"], 6)
             }
+            if is_authed:
+                final_telemetry["cost_usd"] = cost
+                final_telemetry["total_session_cost"] = round(session_stats["total_cost_usd"], 6)
+
             yield f"data: {json.dumps(final_telemetry)}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as err:
@@ -276,7 +364,21 @@ async def execute_query(req: QueryRequest):
     )
 
 @app.post("/api/benchmark")
-async def run_benchmark_endpoint():
+async def run_benchmark_endpoint(
+    request: Request,
+    authorization: Optional[str] = Header(None)
+):
+    require_auth(authorization)
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    allowed, retry_after = check_rate_limit(client_ip, "benchmark", 1, 60)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Eksperimen benchmark dibatasi 1x per menit. Tunggu {retry_after} detik.",
+            headers={"Retry-After": str(retry_after)}
+        )
+
     summary = run_benchmark()
     return summary
 

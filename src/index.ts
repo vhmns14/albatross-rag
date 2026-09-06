@@ -3,6 +3,8 @@
 export interface Env {
   ASSETS: Fetcher;
   AI?: any;
+  ADMIN_KEY?: string;
+  ACCESS_KEY?: string;
   OPUS_BASE_URL?: string;
   OPUS_API_KEY?: string;
   OPUS_MODEL?: string;
@@ -72,11 +74,79 @@ let sessionStats = {
   start_time: Date.now()
 };
 
+// Rate Limit in-memory store
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(ip: string, action: string, maxReq: number, windowSec: number): { allowed: boolean; retryAfter?: number } {
+  const key = `${ip}:${action}`;
+  const now = Date.now();
+  const record = rateLimitStore.get(key);
+
+  if (rateLimitStore.size > 2000) {
+    for (const [k, v] of rateLimitStore.entries()) {
+      if (now > v.resetAt) rateLimitStore.delete(k);
+    }
+  }
+
+  if (!record || now > record.resetAt) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + windowSec * 1000 });
+    return { allowed: true };
+  }
+
+  if (record.count >= maxReq) {
+    const retryAfter = Math.ceil((record.resetAt - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+
+  record.count++;
+  return { allowed: true };
+}
+
+// Authentication Validator
+function checkAuth(request: Request, env: Env): boolean {
+  const secret = env.ADMIN_KEY || env.ACCESS_KEY || "albatross-admin-2026";
+  const authHeader = request.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const queryToken = new URL(request.url).searchParams.get("key") || "";
+  return token === secret || queryToken === secret;
+}
+
+// Security & Strict CORS Headers
+function getSecurityHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin");
+  const host = request.headers.get("Host") || "";
+  
+  let allowedOrigin = "";
+  if (origin) {
+    try {
+      const originUrl = new URL(origin);
+      if (originUrl.host === host || originUrl.hostname === "localhost" || originUrl.hostname === "127.0.0.1") {
+        allowedOrigin = origin;
+      }
+    } catch {}
+  }
+  if (!allowedOrigin && !origin) {
+    allowedOrigin = `https://${host}`;
+  }
+
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin || "null",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https:; img-src 'self' data:;"
+  };
+}
+
 function tokenize(text: string): string[] {
   return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
 }
 
-// Line/paragraph-aware chunking preserving complete table rows & names
+// Line-aware chunking preserving rows & names
 function chunkText(text: string, source: string, targetSize = 1000, overlap = 150): Chunk[] {
   const result: Chunk[] = [];
   const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ").replace(/\r\n/g, "\n").trim();
@@ -240,13 +310,11 @@ async function retrievePipeline(
   }
 
   const qTokens = tokenize(query);
-  const queryLower = query.toLowerCase();
 
   // 1. BM25 Retrieval
   const t0 = performance.now();
   const bm25Raw = bm25Scores(qTokens, chunks);
   const bm25Indexed = bm25Raw.map((score, idx) => {
-    // Add document source keyword bonus (e.g. if user mentions "absensi" and doc source has "absensi")
     const srcLower = chunks[idx].source.toLowerCase();
     const isDocMentioned = qTokens.some(t => t.length >= 3 && srcLower.includes(t));
     const boostedScore = isDocMentioned ? score + 3.0 : score;
@@ -293,7 +361,7 @@ async function retrievePipeline(
     let sim = cosineSimilarity(queryVec, c.vector);
     const srcLower = c.source.toLowerCase();
     if (qTokens.some(t => t.length >= 3 && srcLower.includes(t))) {
-      sim += 0.3; // Boost relevant document
+      sim += 0.3;
     }
     return { idx, score: sim };
   });
@@ -315,7 +383,7 @@ async function retrievePipeline(
   rrfList.sort((a, b) => b.score - a.score);
   timings.push({ step: "Reciprocal Rank Fusion (RRF)", duration_ms: +(performance.now() - t2).toFixed(2) });
 
-  // 4. Cross-Score Reranking (Pool size expands dynamically to topK)
+  // 4. Cross-Score Reranking
   const t3 = performance.now();
   const poolSize = Math.min(Math.max(15, topK), rrfList.length);
   const topCandidates = rrfList.slice(0, poolSize);
@@ -363,25 +431,24 @@ Aturan Mutlak:
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const clientIp = request.headers.get("CF-Connecting-IP") || "127.0.0.1";
+    const secHeaders = getSecurityHeaders(request);
 
-    // CORS preflight
+    // 1. Strict CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization"
-        }
+        headers: secHeaders
       });
     }
 
-    const corsHeaders = {
-      "Access-Control-Allow-Origin": "*",
+    const jsonHeaders = {
+      ...secHeaders,
       "Content-Type": "application/json"
     };
 
-    // 1. GET /api/status
+    // 2. GET /api/status (Public health check)
     if (url.pathname === "/api/status" && request.method === "GET") {
+      const isAuthed = checkAuth(request, env);
       return new Response(JSON.stringify({
         status: "online",
         chunks_indexed: chunks.length,
@@ -389,28 +456,49 @@ export default {
         embedding_model: env.MISTRAL_API_KEY ? "mistral-embed" : "edge-hash-1024d",
         default_model: env.DEFAULT_MODEL || "cf-llama",
         total_queries: sessionStats.total_queries,
-        total_cost_usd: +sessionStats.total_cost_usd.toFixed(6),
-        uptime_seconds: Math.floor((Date.now() - sessionStats.start_time) / 1000)
-      }), { headers: corsHeaders });
+        uptime_seconds: Math.floor((Date.now() - sessionStats.start_time) / 1000),
+        authenticated: isAuthed,
+        ...(isAuthed ? { total_cost_usd: +sessionStats.total_cost_usd.toFixed(6) } : {})
+      }), { headers: jsonHeaders });
     }
 
-    // 2. GET /api/documents
+    // 3. GET /api/documents (Summary only)
     if (url.pathname === "/api/documents" && request.method === "GET") {
-      return new Response(JSON.stringify(getDocumentsSummary()), { headers: corsHeaders });
+      return new Response(JSON.stringify(getDocumentsSummary()), { headers: jsonHeaders });
     }
 
-    // 3. POST /api/documents/clear
+    // 4. GET /api/chunks (Hardened: No full_text leak unless authenticated!)
+    if (url.pathname === "/api/chunks" && request.method === "GET") {
+      const isAuthed = checkAuth(request, env);
+      const items = chunks.map(c => ({
+        chunk_id: c.chunk_id,
+        source: c.source,
+        page: c.page,
+        token_count: c.token_count,
+        snippet: c.text.slice(0, 100) + (c.text.length > 100 ? "..." : ""),
+        ...(isAuthed ? { full_text: c.text } : {})
+      }));
+      return new Response(JSON.stringify(items), { headers: jsonHeaders });
+    }
+
+    // 5. POST /api/documents/clear (Authentication required)
     if (url.pathname === "/api/documents/clear" && request.method === "POST") {
+      if (!checkAuth(request, env)) {
+        return new Response(JSON.stringify({ error: "Akses ditolak: Dibutuhkan Authorization Bearer token untuk mengosongkan database." }), { status: 401, headers: jsonHeaders });
+      }
       chunks = [];
-      return new Response(JSON.stringify({ status: "success", message: "Knowledge base dikosongkan.", chunks_count: 0 }), { headers: corsHeaders });
+      return new Response(JSON.stringify({ status: "success", message: "Knowledge base dikosongkan.", chunks_count: 0 }), { headers: jsonHeaders });
     }
 
-    // 4. POST /api/documents/delete
+    // 6. POST /api/documents/delete (Authentication required)
     if (url.pathname === "/api/documents/delete" && request.method === "POST") {
+      if (!checkAuth(request, env)) {
+        return new Response(JSON.stringify({ error: "Akses ditolak: Dibutuhkan Authorization Bearer token untuk menghapus dokumen." }), { status: 401, headers: jsonHeaders });
+      }
       try {
         const body = await request.json() as { name: string };
         if (!body.name) {
-          return new Response(JSON.stringify({ detail: "Nama dokumen wajib disertakan." }), { status: 400, headers: corsHeaders });
+          return new Response(JSON.stringify({ detail: "Nama dokumen wajib disertakan." }), { status: 400, headers: jsonHeaders });
         }
         chunks = chunks.filter(c => c.source !== body.name);
         return new Response(JSON.stringify({
@@ -418,37 +506,86 @@ export default {
           message: `Dokumen ${body.name} berhasil dihapus.`,
           remaining_chunks: chunks.length,
           documents: getDocumentsSummary()
-        }), { headers: corsHeaders });
+        }), { headers: jsonHeaders });
       } catch (err: any) {
-        return new Response(JSON.stringify({ detail: err.message }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ detail: err.message }), { status: 400, headers: jsonHeaders });
       }
     }
 
-    // 5. GET /api/chunks
-    if (url.pathname === "/api/chunks" && request.method === "GET") {
-      const items = chunks.map(c => ({
-        chunk_id: c.chunk_id,
-        source: c.source,
-        page: c.page,
-        token_count: c.token_count,
-        snippet: c.text.slice(0, 200) + (c.text.length > 200 ? "..." : ""),
-        full_text: c.text
-      }));
-      return new Response(JSON.stringify(items), { headers: corsHeaders });
-    }
-
-    // 6. POST /api/reload-sample
+    // 7. POST /api/reload-sample (Authentication required)
     if (url.pathname === "/api/reload-sample" && request.method === "POST") {
+      if (!checkAuth(request, env)) {
+        return new Response(JSON.stringify({ error: "Akses ditolak: Dibutuhkan Authorization Bearer token untuk memuat demo." }), { status: 401, headers: jsonHeaders });
+      }
       initCorpus();
       return new Response(JSON.stringify({
         status: "success",
         total_chunks: chunks.length,
         documents: getDocumentsSummary()
-      }), { headers: corsHeaders });
+      }), { headers: jsonHeaders });
     }
 
-    // 7. POST /api/benchmark
+    // 8. POST /api/upload (Rate limited + Authentication required)
+    if (url.pathname === "/api/upload" && request.method === "POST") {
+      if (!checkAuth(request, env)) {
+        return new Response(JSON.stringify({ error: "Akses ditolak: Dibutuhkan Authorization Bearer token untuk mengunggah dokumen." }), { status: 401, headers: jsonHeaders });
+      }
+
+      // Rate limit: Max 6 uploads per minute per IP
+      const rl = checkRateLimit(clientIp, "upload", 6, 60);
+      if (!rl.allowed) {
+        return new Response(JSON.stringify({ error: `Terlalu banyak permintaan unggah. Coba lagi dalam ${rl.retryAfter} detik.` }), { status: 429, headers: { ...jsonHeaders, "Retry-After": String(rl.retryAfter) } });
+      }
+
+      try {
+        const formData = await request.formData();
+        const directText = formData.get("text") as string | null;
+        const file = formData.get("file") as File | null;
+        const directFilename = formData.get("filename") as string | null;
+
+        let text = directText || "";
+        const docName = directFilename || (file ? file.name : `doc_${Date.now()}.txt`);
+
+        if (!text && file) {
+          text = await file.text();
+        }
+
+        // Reject unextracted raw binary PDF streams
+        if (text.startsWith("%PDF-") || /[\x00-\x08\x0E-\x1F]/.test(text.slice(0, 100))) {
+          return new Response(JSON.stringify({
+            detail: "File PDF binary terdeteksi tanpa ekstraksi teks. Silakan gunakan tombol upload pada antarmuka web yang otomatis mengekstrak teks asli dokumen."
+          }), { status: 400, headers: jsonHeaders });
+        }
+
+        if (!text.trim()) {
+          return new Response(JSON.stringify({ detail: "Dokumen tidak mengandung teks yang dapat dibaca." }), { status: 400, headers: jsonHeaders });
+        }
+
+        const newChunks = chunkText(text, docName, 1000, 150);
+        chunks = [...chunks, ...newChunks];
+        return new Response(JSON.stringify({
+          status: "success",
+          added_chunks: newChunks.length,
+          total_chunks: chunks.length,
+          documents: getDocumentsSummary()
+        }), { headers: jsonHeaders });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ detail: err.message || "Gagal memproses upload." }), { status: 400, headers: jsonHeaders });
+      }
+    }
+
+    // 9. POST /api/benchmark (Strict Auth + Rate Limit to protect credits)
     if (url.pathname === "/api/benchmark" && request.method === "POST") {
+      if (!checkAuth(request, env)) {
+        return new Response(JSON.stringify({ error: "Akses ditolak: Evaluasi benchmark membutuhkan Authorization Bearer token." }), { status: 401, headers: jsonHeaders });
+      }
+
+      // Rate limit: Max 1 run per 60 seconds per IP
+      const rl = checkRateLimit(clientIp, "benchmark", 1, 60);
+      if (!rl.allowed) {
+        return new Response(JSON.stringify({ error: `Eksperimen benchmark dibatasi 1x per menit. Tunggu ${rl.retryAfter} detik.` }), { status: 429, headers: { ...jsonHeaders, "Retry-After": String(rl.retryAfter) } });
+      }
+
       const results = [];
       let totalPrec = 0, totalRec = 0, totalFaith = 0, totalRel = 0;
 
@@ -491,56 +628,24 @@ export default {
         average_faithfulness: +(totalFaith / n).toFixed(2),
         average_relevance: +(totalRel / n).toFixed(2),
         detailed_results: results
-      }), { headers: corsHeaders });
+      }), { headers: jsonHeaders });
     }
 
-    // 8. POST /api/upload (Accepts clean extracted text or file)
-    if (url.pathname === "/api/upload" && request.method === "POST") {
-      try {
-        const formData = await request.formData();
-        const directText = formData.get("text") as string | null;
-        const file = formData.get("file") as File | null;
-        const directFilename = formData.get("filename") as string | null;
-
-        let text = directText || "";
-        const docName = directFilename || (file ? file.name : `doc_${Date.now()}.txt`);
-
-        if (!text && file) {
-          text = await file.text();
-        }
-
-        // Critical guard: reject unextracted raw binary PDF streams
-        if (text.startsWith("%PDF-") || /[\x00-\x08\x0E-\x1F]/.test(text.slice(0, 100))) {
-          return new Response(JSON.stringify({
-            detail: "File PDF binary terdeteksi tanpa ekstraksi teks. Silakan gunakan tombol upload pada antarmuka web yang otomatis mengekstrak teks asli dokumen."
-          }), { status: 400, headers: corsHeaders });
-        }
-
-        if (!text.trim()) {
-          return new Response(JSON.stringify({ detail: "Dokumen tidak mengandung teks yang dapat dibaca." }), { status: 400, headers: corsHeaders });
-        }
-
-        const newChunks = chunkText(text, docName, 1000, 150);
-        chunks = [...chunks, ...newChunks];
-        return new Response(JSON.stringify({
-          status: "success",
-          added_chunks: newChunks.length,
-          total_chunks: chunks.length,
-          documents: getDocumentsSummary()
-        }), { headers: corsHeaders });
-      } catch (err: any) {
-        return new Response(JSON.stringify({ detail: err.message || "Gagal memproses upload." }), { status: 400, headers: corsHeaders });
-      }
-    }
-
-    // 9. POST /api/query (Streaming SSE with Dynamic Top-K & Multi-LLM)
+    // 10. POST /api/query (Streaming SSE with Rate Limit)
     if (url.pathname === "/api/query" && request.method === "POST") {
+      // Rate limit: Max 15 queries per 60 seconds per IP
+      const rl = checkRateLimit(clientIp, "query", 15, 60);
+      if (!rl.allowed) {
+        return new Response(JSON.stringify({ error: `Terlalu banyak permintaan query. Mohon tunggu ${rl.retryAfter} detik.` }), { status: 429, headers: { ...jsonHeaders, "Retry-After": String(rl.retryAfter) } });
+      }
+
       const body = await request.json() as { query: string; mode?: "hybrid" | "naive"; provider?: string; top_k?: number };
       const queryStr = (body.query || "").trim();
       if (!queryStr) {
-        return new Response(JSON.stringify({ detail: "Pertanyaan tidak boleh kosong." }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ detail: "Pertanyaan tidak boleh kosong." }), { status: 400, headers: jsonHeaders });
       }
 
+      const isAuthed = checkAuth(request, env);
       const mode = body.mode || "hybrid";
       const provider = body.provider || "cf-llama";
       const startTime = performance.now();
@@ -588,8 +693,7 @@ export default {
               total_latency_ms: +(performance.now() - startTime).toFixed(2),
               input_tokens: 0,
               output_tokens: 20,
-              cost_usd: 0,
-              total_session_cost: sessionStats.total_cost_usd
+              ...(isAuthed ? { cost_usd: 0, total_session_cost: sessionStats.total_cost_usd } : {})
             };
             await writer.write(encoder.encode(`data: ${JSON.stringify(endTelemetry)}\n\n`));
             await writer.write(encoder.encode("data: [DONE]\n\n"));
@@ -752,8 +856,7 @@ export default {
             total_latency_ms: totalMs,
             input_tokens: inputTokens,
             output_tokens: outputTokens,
-            cost_usd: +cost.toFixed(6),
-            total_session_cost: +sessionStats.total_cost_usd.toFixed(6)
+            ...(isAuthed ? { cost_usd: +cost.toFixed(6), total_session_cost: +sessionStats.total_cost_usd.toFixed(6) } : {})
           };
 
           await writer.write(encoder.encode(`data: ${JSON.stringify(telemetryEvent)}\n\n`));
@@ -771,12 +874,21 @@ export default {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
-          "Access-Control-Allow-Origin": "*"
+          ...secHeaders
         }
       });
     }
 
-    // Default: Serve frontend static assets (Obsidian UI)
-    return env.ASSETS.fetch(request);
+    // Default: Serve frontend static assets (Obsidian UI) with security headers
+    const assetResponse = await env.ASSETS.fetch(request);
+    const mutableHeaders = new Headers(assetResponse.headers);
+    for (const [k, v] of Object.entries(secHeaders)) {
+      mutableHeaders.set(k, v);
+    }
+    return new Response(assetResponse.body, {
+      status: assetResponse.status,
+      statusText: assetResponse.statusText,
+      headers: mutableHeaders
+    });
   }
 };
