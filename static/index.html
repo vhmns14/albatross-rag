@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
+  
   <!-- PDF.js for Clean In-Browser PDF Text Extraction -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
@@ -16,6 +17,10 @@
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
   </script>
+
+  <!-- Marked.js for Beautiful Markdown & List Rendering -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
+
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -48,13 +53,27 @@
     .card-border:hover { border-color: #383842; }
     .pulse-dot { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    
+    /* Clean Markdown Styles */
+    .markdown-body { font-family: 'Inter', sans-serif; line-height: 1.6; }
+    .markdown-body p { margin-bottom: 0.5rem; }
+    .markdown-body ol { list-style-type: decimal; padding-left: 1.35rem; margin-bottom: 0.5rem; }
+    .markdown-body ul { list-style-type: disc; padding-left: 1.35rem; margin-bottom: 0.5rem; }
+    .markdown-body li { margin-bottom: 0.25rem; }
+    .markdown-body strong { color: #fef08a; font-weight: 600; }
+    .markdown-body code { font-family: 'JetBrains Mono', monospace; background: #1f1f26; padding: 0.1rem 0.35rem; border-radius: 0.25rem; font-size: 0.85em; color: #f59e0b; }
   </style>
 </head>
 <body class="h-screen flex flex-col font-sans overflow-hidden">
 
   <!-- ================= TOP HEADER ================= -->
-  <header class="h-14 border-b border-borderSubtle bg-sidebarBg/90 px-5 flex items-center justify-between shrink-0 z-30">
+  <header class="h-14 border-b border-borderSubtle bg-sidebarBg/90 px-4 md:px-5 flex items-center justify-between shrink-0 z-30">
     <div class="flex items-center gap-3">
+      <!-- Mobile Sidebar Toggle Button -->
+      <button onclick="toggleMobileSidebar()" class="md:hidden p-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300">
+        <i data-lucide="menu" class="w-4 h-4"></i>
+      </button>
+
       <div class="w-8 h-8 rounded bg-white flex items-center justify-center font-mono font-bold text-black text-xs tracking-tighter">
         AL
       </div>
@@ -67,11 +86,11 @@
     </div>
 
     <!-- Quick Status & Actions -->
-    <div class="flex items-center gap-4 text-xs font-mono">
+    <div class="flex items-center gap-3 md:gap-4 text-xs font-mono">
       <!-- Status Badge -->
-      <div class="flex items-center gap-2 px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded text-[11px]">
+      <div class="hidden sm:flex items-center gap-2 px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded text-[11px]">
         <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot"></span>
-        <span class="text-zinc-300" id="header-status">EDGE RETRIEVAL ACTIVE</span>
+        <span class="text-zinc-300">EDGE RETRIEVAL</span>
         <span class="text-zinc-700">|</span>
         <span class="text-amber-400 font-semibold" id="header-chunks-count">0 chunks</span>
       </div>
@@ -79,11 +98,11 @@
       <!-- Benchmark Modal Button -->
       <button onclick="openBenchmarkModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 transition">
         <i data-lucide="gauge" class="w-3.5 h-3.5 text-amber-400"></i>
-        <span>Benchmark RAGAS</span>
+        <span class="hidden sm:inline">Benchmark RAGAS</span>
       </button>
 
       <!-- Spend HUD -->
-      <div class="flex items-center gap-2 border-l border-zinc-800 pl-4">
+      <div class="flex items-center gap-2 border-l border-zinc-800 pl-3 md:pl-4">
         <span class="text-[10px] text-zinc-500 uppercase">Cost:</span>
         <span class="text-amber-400 font-bold" id="session-cost-hud">$0.000000</span>
       </div>
@@ -91,10 +110,10 @@
   </header>
 
   <!-- ================= MAIN WORKBENCH LAYOUT ================= -->
-  <div class="flex-1 flex overflow-hidden">
+  <div class="flex-1 flex overflow-hidden relative">
 
     <!-- ---------------- SIDEBAR: DOKUMEN & KNOWLEDGE BASE (320px) ---------------- -->
-    <aside class="w-80 border-r border-borderSubtle bg-sidebarBg flex flex-col shrink-0 font-mono text-xs">
+    <aside id="sidebar" class="absolute md:static inset-y-0 left-0 z-40 w-80 border-r border-borderSubtle bg-sidebarBg flex flex-col shrink-0 font-mono text-xs transform -translate-x-full md:translate-x-0 transition-transform duration-200">
       
       <!-- Section: Document Manager -->
       <div class="p-4 border-b border-borderSubtle flex flex-col gap-3">
@@ -181,7 +200,7 @@
     <main class="flex-1 flex flex-col bg-darkBg overflow-hidden">
 
       <!-- Query / Chat Feed -->
-      <div id="chat-feed" class="flex-1 overflow-y-auto p-6 space-y-6">
+      <div id="chat-feed" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
         
         <!-- Welcome Hero Banner (Shows when feed is clean) -->
         <div id="welcome-card" class="max-w-3xl mx-auto card-border rounded-xl p-6 transition">
@@ -215,8 +234,17 @@
       </div>
 
       <!-- Bottom Query Input Bar -->
-      <div class="p-4 border-t border-borderSubtle bg-sidebarBg/80">
+      <div class="p-3 md:p-4 border-t border-borderSubtle bg-sidebarBg/80">
         <div class="max-w-4xl mx-auto flex items-center gap-2">
+          <!-- Reset Feed Button -->
+          <button 
+            onclick="clearChatFeed()" 
+            title="Bersihkan riwayat chat (dokumen tetap tersimpan)"
+            class="p-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-lg transition shrink-0"
+          >
+            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+          </button>
+
           <div class="relative flex-1">
             <input 
               type="text" 
@@ -244,7 +272,7 @@
             class="px-3.5 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-amber-400 font-mono text-xs rounded-lg transition flex items-center gap-1.5 shrink-0"
           >
             <i data-lucide="columns-2" class="w-4 h-4"></i>
-            <span class="font-bold">COMPARE A/B</span>
+            <span class="font-bold hidden sm:inline">COMPARE A/B</span>
           </button>
         </div>
       </div>
@@ -338,6 +366,38 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+    }
+
+    function toggleMobileSidebar() {
+      const sb = document.getElementById('sidebar');
+      sb.classList.toggle('-translate-x-full');
+    }
+
+    function clearChatFeed() {
+      const feed = document.getElementById('chat-feed');
+      feed.innerHTML = `
+        <div id="welcome-card" class="max-w-3xl mx-auto card-border rounded-xl p-6 transition">
+          <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-amber-400 shrink-0">
+              <i data-lucide="sparkles" class="w-5 h-5"></i>
+            </div>
+            <div class="flex-1">
+              <h2 class="text-sm font-bold text-white mb-1">Albatross Observable Hybrid Retrieval</h2>
+              <p class="text-xs text-zinc-400 leading-relaxed">
+                Knowledge base siap. Masukkan pertanyaan analitikmu di bawah untuk mencari informasi secara akurat dari dokumen.
+              </p>
+            </div>
+          </div>
+        </div>
+      `;
+      lucide.createIcons();
+    }
+
+    function copyAnswer(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      navigator.clipboard.writeText(el.innerText || el.textContent);
+      alert("Jawaban berhasil disalin ke clipboard!");
     }
 
     function setMode(mode) {
@@ -519,7 +579,7 @@
       }
     }
 
-    // Execute Query (SSE Streaming)
+    // Execute Query (SSE Streaming with Markdown Parser)
     async function executeQuery() {
       const input = document.getElementById('query-input');
       const query = input.value.trim();
@@ -528,7 +588,7 @@
       isQueryRunning = true;
       runCounter++;
       const provider = document.getElementById('model-select').value;
-      const modelLabel = provider === 'opus' ? 'Claude Opus 4.6' : (provider === 'mistral' ? 'Mistral Large' : 'Groq Llama 3.3');
+      const modelLabel = provider === 'cf-llama' ? 'Llama 3.3 70B (Edge)' : (provider === 'opus' ? 'Claude Opus 4.6' : 'Mistral Large');
 
       // Hide welcome card
       const welcome = document.getElementById('welcome-card');
@@ -556,14 +616,20 @@
             <span class="font-bold text-zinc-200">${escapeHtml(modelLabel)}</span>
             <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-amber-400 font-semibold uppercase">${escapeHtml(currentMode)}</span>
           </div>
-          <span class="text-[10px] text-emerald-400 bg-emerald-950/40 border border-emerald-800/50 px-2 py-0.5 rounded">
-            GROUNDED VERIFIED
-          </span>
+          <div class="flex items-center gap-2">
+            <button onclick="copyAnswer('answer-text-${runCounter}')" title="Salin jawaban" class="px-2 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white text-[10px] flex items-center gap-1 transition">
+              <i data-lucide="copy" class="w-3 h-3"></i>
+              <span>Salin</span>
+            </button>
+            <span class="text-[10px] text-emerald-400 bg-emerald-950/40 border border-emerald-800/50 px-2 py-0.5 rounded">
+              VERIFIED
+            </span>
+          </div>
         </div>
 
-        <!-- Streaming Answer Text -->
-        <div class="text-xs text-zinc-200 leading-relaxed font-sans">
-          <div id="answer-text-${runCounter}" class="whitespace-pre-wrap"><span class="text-zinc-500 font-mono text-[11px]">Mencari dokumen dan mengeksekusi model...</span></div>
+        <!-- Streaming Formatted Answer Text -->
+        <div class="text-xs text-zinc-200 font-sans leading-relaxed">
+          <div id="answer-text-${runCounter}" class="markdown-body whitespace-pre-wrap"><span class="text-zinc-500 font-mono text-[11px]">Mencari dokumen dan mengeksekusi model...</span></div>
         </div>
 
         <!-- Collapsible 1: Retrieved Chunks Accordion -->
@@ -612,8 +678,10 @@
       const tokenInfoSpan = document.getElementById(`token-info-${runCounter}`);
       const costInfoSpan = document.getElementById(`cost-info-${runCounter}`);
 
-      answerDiv.textContent = '';
+      answerDiv.innerHTML = '';
       input.value = '';
+
+      let fullAnswerText = '';
 
       try {
         const response = await fetch('/api/query', {
@@ -659,16 +727,21 @@
                           <span class="text-amber-400 font-bold">${escapeHtml(c.chunk_id)} (${escapeHtml(c.source)})</span>
                           <span class="text-emerald-400 font-bold">Skor: ${c.score || 0}</span>
                         </div>
-                        <p class="text-zinc-300 font-sans leading-relaxed">${escapeHtml(c.text)}</p>
+                        <p class="text-zinc-300 font-sans leading-relaxed whitespace-pre-wrap">${escapeHtml(c.text)}</p>
                       `;
                       chunksAcc.appendChild(div);
                     });
                   }
                 }
 
-                // 2. Delta Event (Streaming Tokens)
+                // 2. Delta Event (Streaming Tokens with Markdown formatting)
                 if (event.type === 'delta') {
-                  answerDiv.textContent += event.content;
+                  fullAnswerText += event.content;
+                  if (typeof marked !== 'undefined') {
+                    answerDiv.innerHTML = marked.parse(fullAnswerText);
+                  } else {
+                    answerDiv.textContent = fullAnswerText;
+                  }
                   feed.scrollTop = feed.scrollHeight;
                 }
 
@@ -761,14 +834,14 @@
           <span class="text-[10px] text-zinc-400">Simultaneous Execution</span>
         </div>
 
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <!-- Col A: Naive Vector -->
           <div class="p-3 rounded-lg border border-zinc-800 bg-zinc-950/70 flex flex-col gap-2">
             <div class="flex items-center justify-between border-b border-zinc-800 pb-1.5 text-xs">
               <span class="font-bold text-zinc-300">Model A: Naive Vector</span>
               <span class="text-[10px] text-zinc-500" id="cmp-latency-a">-- ms</span>
             </div>
-            <div id="cmp-answer-a" class="text-xs text-zinc-200 font-sans leading-relaxed min-h-[80px]">
+            <div id="cmp-answer-a" class="markdown-body text-xs text-zinc-200 font-sans leading-relaxed min-h-[80px]">
               <span class="text-zinc-500 font-mono text-[11px]">Memproses...</span>
             </div>
           </div>
@@ -779,7 +852,7 @@
               <span class="font-bold text-amber-400">Model B: Albatross Hybrid RRF</span>
               <span class="text-[10px] text-amber-400 font-bold" id="cmp-latency-b">-- ms</span>
             </div>
-            <div id="cmp-answer-b" class="text-xs text-zinc-200 font-sans leading-relaxed min-h-[80px]">
+            <div id="cmp-answer-b" class="markdown-body text-xs text-zinc-200 font-sans leading-relaxed min-h-[80px]">
               <span class="text-zinc-500 font-mono text-[11px]">Memproses...</span>
             </div>
           </div>
@@ -794,13 +867,14 @@
       async function streamQuery(mode, answerDivId, latencySpanId) {
         const answerDiv = document.getElementById(answerDivId);
         const latencySpan = document.getElementById(latencySpanId);
-        answerDiv.textContent = '';
+        answerDiv.innerHTML = '';
+        let fullText = '';
 
         try {
           const res = await fetch('/api/query', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, mode, provider: 'opus' })
+            body: JSON.stringify({ query, mode, provider: 'cf-llama' })
           });
 
           const reader = res.body.getReader();
@@ -823,7 +897,12 @@
                 try {
                   const ev = JSON.parse(dataStr);
                   if (ev.type === 'delta') {
-                    answerDiv.textContent += ev.content;
+                    fullText += ev.content;
+                    if (typeof marked !== 'undefined') {
+                      answerDiv.innerHTML = marked.parse(fullText);
+                    } else {
+                      answerDiv.textContent = fullText;
+                    }
                     feed.scrollTop = feed.scrollHeight;
                   }
                   if (ev.type === 'telemetry') {
@@ -844,6 +923,46 @@
       ]);
 
       isQueryRunning = false;
+    }
+
+    // Line-Aware Text Extraction from PDF using PDF.js
+    async function extractTextFromPDF(file) {
+      if (typeof pdfjsLib === 'undefined') {
+        throw new Error("PDF.js library belum selesai dimuat. Silakan refresh halaman.");
+      }
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        let pageText = '';
+        let lastY = null;
+
+        for (const item of textContent.items) {
+          if (!item.str) continue;
+          const currentY = item.transform ? item.transform[5] : null;
+          
+          // Y-coordinate drop or EOL marks a genuine new line
+          if (lastY !== null && currentY !== null && Math.abs(currentY - lastY) > 5) {
+            pageText += '\n';
+          } else if (item.hasEOL) {
+            pageText += '\n';
+          } else if (pageText.length > 0 && !pageText.endsWith('\n') && !pageText.endsWith(' ')) {
+            pageText += ' ';
+          }
+
+          pageText += item.str;
+          if (currentY !== null) lastY = currentY;
+        }
+
+        if (pageText.trim()) {
+          fullText += `[Halaman ${i}]\n${pageText.trim()}\n\n`;
+        }
+      }
+
+      return fullText.trim();
     }
 
     // Drag and Drop Upload
@@ -875,24 +994,6 @@
       }
     });
 
-    async function extractTextFromPDF(file) {
-      if (typeof pdfjsLib === 'undefined') {
-        throw new Error("PDF.js library belum siap dimuat.");
-      }
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = '';
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map(item => item.str).join(' ');
-        if (pageText.trim()) {
-          fullText += `[Halaman ${i}]\n${pageText.trim()}\n\n`;
-        }
-      }
-      return fullText.trim();
-    }
-
     async function handleUpload(file) {
       const dropzoneDesc = document.getElementById('dropzone-desc');
       try {
@@ -908,7 +1009,7 @@
         }
 
         if (!textContent || !textContent.trim()) {
-          alert("Dokumen PDF tidak mengandung teks digital yang dapat diekstrak (kemungkinan file scan/gambar tanpa OCR).");
+          alert("Dokumen PDF tidak memuat teks digital yang dapat diekstrak (kemungkinan file scan/gambar tanpa OCR).");
           return;
         }
 
