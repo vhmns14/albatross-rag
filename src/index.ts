@@ -19,6 +19,13 @@ export interface Chunk {
   vector?: number[];
 }
 
+export interface DocumentInfo {
+  name: string;
+  chunk_count: number;
+  token_count: number;
+  is_demo?: boolean;
+}
+
 const SAMPLE_CORPUS = `Laporan Tahunan PT Teknologi Nusantara 2024.
 Bab 1: Kinerja Finansial.
 Pada kuartal ketiga tahun 2024, rasio solvabilitas perusahaan tercatat sebesar 1.45x, 
@@ -56,7 +63,7 @@ const BENCHMARK_DATASET = [
   }
 ];
 
-// In-memory chunks store
+// In-memory state
 let chunks: Chunk[] = [];
 let sessionStats = {
   total_queries: 0,
@@ -97,9 +104,26 @@ function chunkText(text: string, source: string, chunkSize = 400, overlap = 80):
 }
 
 function initCorpus() {
-  chunks = chunkText(SAMPLE_CORPUS, "laporan_keuangan_2024.txt");
+  chunks = chunkText(SAMPLE_CORPUS, "laporan_keuangan_2024.txt (Demo)");
 }
+// Initialize with sample corpus by default, but user can clear or delete anytime!
 initCorpus();
+
+function getDocumentsSummary(): DocumentInfo[] {
+  const map = new Map<string, { count: number; tokens: number }>();
+  for (const c of chunks) {
+    const existing = map.get(c.source) || { count: 0, tokens: 0 };
+    existing.count++;
+    existing.tokens += c.token_count;
+    map.set(c.source, existing);
+  }
+  return Array.from(map.entries()).map(([name, stat]) => ({
+    name,
+    chunk_count: stat.count,
+    token_count: stat.tokens,
+    is_demo: name.includes("(Demo)")
+  }));
+}
 
 // Deterministic 1024-dim fallback vector
 function generateDeterministicVector(text: string, dims = 1024): number[] {
@@ -184,6 +208,10 @@ async function retrievePipeline(
   timings: { step: string; duration_ms: number }[];
 }> {
   const timings: { step: string; duration_ms: number }[] = [];
+  if (chunks.length === 0) {
+    return { chunks: [], timings };
+  }
+
   const qTokens = tokenize(query);
 
   // 1. BM25 Retrieval
@@ -269,6 +297,12 @@ async function retrievePipeline(
 }
 
 function buildPrompt(query: string, retrieved: Chunk[]): { sysPrompt: string; userPrompt: string } {
+  if (retrieved.length === 0) {
+    const sysPrompt = `Anda adalah Albatross AI Assistant.`;
+    const userPrompt = `Tidak ada dokumen di knowledge base saat ini. Informasikan kepada pengguna untuk mengunggah dokumen terlebih dahulu. Pertanyaan: ${query}`;
+    return { sysPrompt, userPrompt };
+  }
+
   const contextStr = retrieved
     .map(c => `[Doc: ${c.source} | Chunk: ${c.chunk_id}]\n${c.text}`)
     .join("\n\n---\n\n");
@@ -291,7 +325,7 @@ export default {
       return new Response(null, {
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization"
         }
       });
@@ -307,6 +341,7 @@ export default {
       return new Response(JSON.stringify({
         status: "online",
         chunks_indexed: chunks.length,
+        documents_count: getDocumentsSummary().length,
         embedding_model: env.MISTRAL_API_KEY ? "mistral-embed" : "edge-hash-1024d",
         default_model: env.DEFAULT_MODEL || "opus",
         total_queries: sessionStats.total_queries,
@@ -315,7 +350,37 @@ export default {
       }), { headers: corsHeaders });
     }
 
-    // 2. GET /api/chunks
+    // 2. GET /api/documents
+    if (url.pathname === "/api/documents" && request.method === "GET") {
+      return new Response(JSON.stringify(getDocumentsSummary()), { headers: corsHeaders });
+    }
+
+    // 3. POST /api/documents/clear (KOSONGKAN SEMUA DOKUMEN)
+    if (url.pathname === "/api/documents/clear" && request.method === "POST") {
+      chunks = [];
+      return new Response(JSON.stringify({ status: "success", message: "Knowledge base dikosongkan.", chunks_count: 0 }), { headers: corsHeaders });
+    }
+
+    // 4. POST /api/documents/delete (HAPUS DOKUMEN TERTENTU)
+    if (url.pathname === "/api/documents/delete" && request.method === "POST") {
+      try {
+        const body = await request.json() as { name: string };
+        if (!body.name) {
+          return new Response(JSON.stringify({ detail: "Nama dokumen wajib disertakan." }), { status: 400, headers: corsHeaders });
+        }
+        chunks = chunks.filter(c => c.source !== body.name);
+        return new Response(JSON.stringify({
+          status: "success",
+          message: `Dokumen ${body.name} berhasil dihapus.`,
+          remaining_chunks: chunks.length,
+          documents: getDocumentsSummary()
+        }), { headers: corsHeaders });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ detail: err.message }), { status: 400, headers: corsHeaders });
+      }
+    }
+
+    // 5. GET /api/chunks
     if (url.pathname === "/api/chunks" && request.method === "GET") {
       const items = chunks.map(c => ({
         chunk_id: c.chunk_id,
@@ -328,13 +393,17 @@ export default {
       return new Response(JSON.stringify(items), { headers: corsHeaders });
     }
 
-    // 3. POST /api/reload-sample
+    // 6. POST /api/reload-sample
     if (url.pathname === "/api/reload-sample" && request.method === "POST") {
       initCorpus();
-      return new Response(JSON.stringify({ status: "success", total_chunks: chunks.length }), { headers: corsHeaders });
+      return new Response(JSON.stringify({
+        status: "success",
+        total_chunks: chunks.length,
+        documents: getDocumentsSummary()
+      }), { headers: corsHeaders });
     }
 
-    // 4. POST /api/benchmark
+    // 7. POST /api/benchmark
     if (url.pathname === "/api/benchmark" && request.method === "POST") {
       const results = [];
       let totalPrec = 0, totalRec = 0, totalFaith = 0, totalRel = 0;
@@ -381,7 +450,7 @@ export default {
       }), { headers: corsHeaders });
     }
 
-    // 5. POST /api/upload
+    // 8. POST /api/upload
     if (url.pathname === "/api/upload" && request.method === "POST") {
       try {
         const formData = await request.formData();
@@ -391,22 +460,28 @@ export default {
         }
         const text = await file.text();
         if (!text.trim()) {
-          return new Response(JSON.stringify({ detail: "Uploaded file is empty." }), { status: 400, headers: corsHeaders });
+          return new Response(JSON.stringify({ detail: "File kosong atau tidak terbaca." }), { status: 400, headers: corsHeaders });
         }
-        const newChunks = chunkText(text, file.name || "uploaded_doc.txt");
+        const docName = file.name || `doc_${Date.now()}.txt`;
+        const newChunks = chunkText(text, docName);
         chunks = [...chunks, ...newChunks];
-        return new Response(JSON.stringify({ status: "success", added_chunks: newChunks.length, total_chunks: chunks.length }), { headers: corsHeaders });
+        return new Response(JSON.stringify({
+          status: "success",
+          added_chunks: newChunks.length,
+          total_chunks: chunks.length,
+          documents: getDocumentsSummary()
+        }), { headers: corsHeaders });
       } catch (err: any) {
-        return new Response(JSON.stringify({ detail: err.message || "Failed to process upload." }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ detail: err.message || "Gagal memproses upload." }), { status: 400, headers: corsHeaders });
       }
     }
 
-    // 6. POST /api/query (Streaming SSE)
+    // 9. POST /api/query (Streaming SSE)
     if (url.pathname === "/api/query" && request.method === "POST") {
       const body = await request.json() as { query: string; mode?: "hybrid" | "naive"; provider?: "opus" | "mistral" | "groq" };
       const queryStr = (body.query || "").trim();
       if (!queryStr) {
-        return new Response(JSON.stringify({ detail: "Query cannot be empty." }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ detail: "Pertanyaan tidak boleh kosong." }), { status: 400, headers: corsHeaders });
       }
 
       const mode = body.mode || "hybrid";
@@ -440,6 +515,24 @@ export default {
             provider
           };
           await writer.write(encoder.encode(`data: ${JSON.stringify(metaEvent)}\n\n`));
+
+          // If no chunks indexed:
+          if (retrieval.chunks.length === 0) {
+            const noDocMsg = "Knowledge base saat ini belum memiliki dokumen. Silakan unggah file PDF/TXT di sidebar kiri atau klik tombol 'Muat Contoh Demo' untuk mencoba fitur pencarian hybrid.";
+            await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "delta", content: noDocMsg })}\n\n`));
+            const endTelemetry = {
+              type: "telemetry",
+              timings: [{ step: "Knowledge Check", duration_ms: 0.1 }],
+              total_latency_ms: +(performance.now() - startTime).toFixed(2),
+              input_tokens: 0,
+              output_tokens: 25,
+              cost_usd: 0,
+              total_session_cost: sessionStats.total_cost_usd
+            };
+            await writer.write(encoder.encode(`data: ${JSON.stringify(endTelemetry)}\n\n`));
+            await writer.write(encoder.encode("data: [DONE]\n\n"));
+            return;
+          }
 
           // Generate LLM tokens
           const tGen = performance.now();
@@ -507,9 +600,8 @@ export default {
             }
           } else {
             // High-speed grounded edge response
-            const grounded = `Berdasarkan data terverifikasi pada sistem:\n\n` +
-              retrieval.chunks.map(c => `• [${c.chunk_id}] ${c.text}`).join("\n\n") +
-              `\n\n(Catatan: Respon disintesis langsung di Cloudflare Edge Node).`;
+            const grounded = `Berdasarkan data dokumen terverifikasi:\n\n` +
+              retrieval.chunks.map(c => `• [${c.chunk_id} - ${c.source}]\n  ${c.text}`).join("\n\n");
             for (const word of grounded.split(" ")) {
               fullText += word + " ";
               await writer.write(encoder.encode(`data: ${JSON.stringify({ type: "delta", content: word + " " })}\n\n`));

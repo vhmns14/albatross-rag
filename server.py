@@ -92,6 +92,37 @@ async def get_chunks():
         for c in engine.chunks
     ]
 
+@app.get("/api/documents")
+async def get_documents():
+    counts = {}
+    tokens = {}
+    for c in engine.chunks:
+        counts[c.source] = counts.get(c.source, 0) + 1
+        tokens[c.source] = tokens.get(c.source, 0) + c.token_count
+    return [
+        {
+            "name": name,
+            "chunk_count": counts[name],
+            "token_count": tokens[name],
+            "is_demo": "(Demo)" in name or name == "laporan_keuangan_2024.txt"
+        }
+        for name in counts
+    ]
+
+@app.post("/api/documents/clear")
+async def clear_documents():
+    engine.clear()
+    return {"status": "success", "message": "Knowledge base cleared", "chunks_count": 0}
+
+class DeleteDocRequest(BaseModel):
+    name: str
+
+@app.post("/api/documents/delete")
+async def delete_document_endpoint(req: DeleteDocRequest):
+    remaining = engine.delete_document(req.name)
+    return {"status": "success", "remaining_chunks": remaining}
+
+
 @app.post("/api/upload")
 async def upload_document(file: UploadFile = File(...)):
     # 1. Validate filename presence and extension

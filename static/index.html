@@ -1,16 +1,13 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="id" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ALBATROSS // Hybrid Retrieval Workbench</title>
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Google Fonts: Inter & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
   <script>
     tailwind.config = {
@@ -22,11 +19,11 @@
             mono: ['JetBrains Mono', 'monospace'],
           },
           colors: {
-            brandDark: '#08080a',
-            surface: '#0f0f12',
-            surfaceElevated: '#16161a',
-            borderSubtle: '#222227',
-            borderHover: '#32323a',
+            darkBg: '#09090b',
+            sidebarBg: '#111114',
+            cardBg: '#16161a',
+            borderSubtle: '#27272e',
+            borderHover: '#3f3f4a',
             accentAmber: '#f59e0b',
             accentEmerald: '#10b981',
           }
@@ -35,395 +32,300 @@
     }
   </script>
   <style>
-    body { background-color: #08080a; color: #e4e4e7; }
+    body { background-color: #09090b; color: #f4f4f5; }
     ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: #08080a; }
-    ::-webkit-scrollbar-thumb { background: #222227; border-radius: 2px; }
-    ::-webkit-scrollbar-thumb:hover { background: #32323a; }
-    .glass-nav { background: rgba(12, 12, 15, 0.95); border-bottom: 1px solid #1f1f25; }
-    .terminal-card { border: 1px solid #1f1f25; background: #0d0d10; transition: border-color 0.15s ease; }
-    .terminal-card:hover { border-color: #2e2e38; }
-    .pulse-amber { animation: pulseAmber 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-    @keyframes pulseAmber { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    ::-webkit-scrollbar-track { background: #09090b; }
+    ::-webkit-scrollbar-thumb { background: #27272e; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3f3f4a; }
+    .card-border { border: 1px solid #27272e; background-color: #121216; }
+    .card-border:hover { border-color: #383842; }
+    .pulse-dot { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   </style>
 </head>
 <body class="h-screen flex flex-col font-sans overflow-hidden">
 
-  <!-- ================= TOP HUD NAVBAR ================= -->
-  <header class="glass-nav px-6 py-3 flex items-center justify-between z-30 shrink-0">
-    <div class="flex items-center gap-4">
-      <!-- Minimalist Monospace Brand -->
-      <div class="flex items-center gap-3">
-        <div class="w-7 h-7 rounded bg-zinc-100 flex items-center justify-center font-mono font-bold text-black text-xs tracking-tighter">
-          AL
-        </div>
+  <!-- ================= TOP HEADER ================= -->
+  <header class="h-14 border-b border-borderSubtle bg-sidebarBg/90 px-5 flex items-center justify-between shrink-0 z-30">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded bg-white flex items-center justify-center font-mono font-bold text-black text-xs tracking-tighter">
+        AL
+      </div>
+      <div>
         <div class="flex items-center gap-2">
           <span class="font-bold text-sm tracking-tight text-white font-mono">ALBATROSS</span>
-          <span class="text-[10px] font-mono font-semibold uppercase bg-zinc-900 text-zinc-400 border border-zinc-800 px-1.5 py-0.5 rounded">v1.3 // HARDENED</span>
+          <span class="text-[10px] font-mono uppercase bg-zinc-900 text-zinc-400 border border-zinc-800 px-1.5 py-0.5 rounded">RAG WORKBENCH</span>
         </div>
       </div>
+    </div>
 
-      <div class="h-4 w-[1px] bg-zinc-800 mx-1"></div>
-
-      <!-- Live Hardware/System Status -->
-      <div class="flex items-center gap-2 px-2.5 py-1 bg-zinc-900/80 border border-zinc-800/80 rounded text-[11px] font-mono">
-        <span class="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-amber"></span>
-        <span class="text-zinc-300">TELEMETRY ARMED</span>
+    <!-- Quick Status & Actions -->
+    <div class="flex items-center gap-4 text-xs font-mono">
+      <!-- Status Badge -->
+      <div class="flex items-center gap-2 px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded text-[11px]">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot"></span>
+        <span class="text-zinc-300" id="header-status">EDGE RETRIEVAL ACTIVE</span>
         <span class="text-zinc-700">|</span>
-        <span class="text-zinc-400 text-[10px]" id="dense-engine-tag">Mistral-Embed (1024d)</span>
-      </div>
-    </div>
-
-    <!-- Center Controls: Model & Mode -->
-    <div class="flex items-center gap-3">
-      <!-- LLM Provider Select -->
-      <div class="flex items-center bg-zinc-950 border border-zinc-800 rounded p-0.5 text-xs font-mono">
-        <span class="text-zinc-400 px-2 flex items-center gap-1.5 text-[11px]">
-          <i data-lucide="terminal" class="w-3 h-3 text-zinc-400"></i> Model:
-        </span>
-        <select id="model-select" class="bg-zinc-900 text-zinc-200 border border-zinc-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-zinc-600 font-mono font-medium">
-          <option value="opus" selected>Claude Opus 4.6 (Active)</option>
-          <option value="mistral">Mistral Large (Active)</option>
-          <option value="groq">Groq (Llama 3.3 70B)</option>
-        </select>
+        <span class="text-amber-400 font-semibold" id="header-chunks-count">0 chunks</span>
       </div>
 
-      <!-- Mode Switch -->
-      <div class="flex items-center bg-zinc-950 border border-zinc-800 rounded p-0.5 text-xs font-mono">
-        <button id="mode-hybrid-btn" onclick="setMode('hybrid')" class="px-2.5 py-1 rounded text-xs transition-all bg-zinc-100 text-black font-semibold flex items-center gap-1.5">
-          <i data-lucide="layers" class="w-3 h-3"></i> Hybrid RRF
-        </button>
-        <button id="mode-naive-btn" onclick="setMode('naive')" class="px-2.5 py-1 rounded text-xs transition-all text-zinc-400 hover:text-white flex items-center gap-1.5">
-          <i data-lucide="git-commit" class="w-3 h-3"></i> Naive Vector
-        </button>
-      </div>
-    </div>
-
-    <!-- Right Controls: Evals Modal & Cost Tracker -->
-    <div class="flex items-center gap-4">
-      <button onclick="openBenchmarkModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-mono transition">
+      <!-- Benchmark Modal Button -->
+      <button onclick="openBenchmarkModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 transition">
         <i data-lucide="gauge" class="w-3.5 h-3.5 text-amber-400"></i>
-        <span>Benchmark Studio</span>
+        <span>Benchmark RAGAS</span>
       </button>
 
       <!-- Spend HUD -->
-      <div class="text-right font-mono border-l border-zinc-800 pl-4">
-        <div class="text-[9px] text-zinc-400 font-semibold tracking-wider uppercase">SESSION COST</div>
-        <div class="text-xs font-bold text-amber-400" id="session-cost-hud">$0.000000</div>
+      <div class="flex items-center gap-2 border-l border-zinc-800 pl-4">
+        <span class="text-[10px] text-zinc-500 uppercase">Cost:</span>
+        <span class="text-amber-400 font-bold" id="session-cost-hud">$0.000000</span>
       </div>
     </div>
   </header>
 
-  <!-- ================= 3-COLUMN WORKBENCH ================= -->
-  <main class="flex-1 grid grid-cols-12 gap-0 overflow-hidden">
+  <!-- ================= MAIN WORKBENCH LAYOUT ================= -->
+  <div class="flex-1 flex overflow-hidden">
 
-    <!-- ---------------- COLUMN 1: KNOWLEDGE & CHUNKS (3 cols) ---------------- -->
-    <aside class="col-span-3 border-r border-[#1f1f25] bg-[#0c0c0e] p-4 flex flex-col gap-4 overflow-y-auto font-mono">
+    <!-- ---------------- SIDEBAR: DOKUMEN & KNOWLEDGE BASE (320px) ---------------- -->
+    <aside class="w-80 border-r border-borderSubtle bg-sidebarBg flex flex-col shrink-0 font-mono text-xs">
       
-      <!-- Section Header -->
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider">
-          <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-zinc-400"></i> Local Index
-        </div>
-        <span class="text-[10px] bg-zinc-900 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-800" id="chunks-badge">... chunks</span>
-      </div>
-
-      <!-- Active Document Card -->
-      <div class="p-3 rounded border border-zinc-800/90 bg-[#101014] flex flex-col gap-2.5">
-        <div class="flex items-start justify-between">
-          <div class="flex items-center gap-2">
-            <i data-lucide="file-code" class="w-4 h-4 text-zinc-400 shrink-0"></i>
-            <div>
-              <p class="text-xs font-semibold text-zinc-200 truncate w-40" id="active-doc-name">laporan_keuangan_2024.txt</p>
-              <p class="text-[10px] text-zinc-400 mt-0.5">In-Memory Cosine Matrix</p>
-            </div>
-          </div>
-          <span class="px-1.5 py-0.5 text-[9px] font-bold bg-zinc-900 text-emerald-400 border border-zinc-800 rounded">ARMED</span>
+      <!-- Section: Document Manager -->
+      <div class="p-4 border-b border-borderSubtle flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-zinc-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+            <i data-lucide="folder-open" class="w-4 h-4 text-zinc-400"></i>
+            Knowledge Base
+          </span>
+          <span class="text-[10px] bg-zinc-900 border border-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded" id="doc-count-badge">0 Dokumen</span>
         </div>
 
-        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-800/80 text-[10px]">
-          <div class="bg-zinc-950 p-2 rounded border border-zinc-800">
-            <span class="text-zinc-400">SPARSE (BM25)</span>
-            <p class="text-zinc-200 font-semibold mt-0.5">Active</p>
-          </div>
-          <div class="bg-zinc-950 p-2 rounded border border-zinc-800">
-            <span class="text-zinc-400">DENSE EMBED</span>
-            <p class="text-amber-400 font-semibold mt-0.5">Mistral-1024d</p>
-          </div>
+        <!-- Ingest Upload Box -->
+        <div id="dropzone" class="border border-dashed border-zinc-700/80 hover:border-zinc-500 bg-zinc-950/80 rounded-lg p-3 text-center cursor-pointer transition">
+          <input type="file" id="file-input" class="hidden" accept=".pdf,.txt">
+          <i data-lucide="upload-cloud" class="w-5 h-5 mx-auto text-zinc-400 mb-1"></i>
+          <p class="text-xs text-zinc-200 font-medium">Unggah Dokumen</p>
+          <p class="text-[10px] text-zinc-500 mt-0.5">PDF atau TXT (Maks. 10MB)</p>
         </div>
 
-        <div class="flex items-center gap-2 pt-1">
-          <button onclick="reloadSample()" class="w-full text-[11px] py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded border border-zinc-800 transition flex items-center justify-center gap-1.5">
-            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reload Sample Corpus
+        <!-- Quick Action Buttons -->
+        <div class="grid grid-cols-2 gap-2 text-[11px]">
+          <button onclick="reloadSample()" id="btn-load-demo" class="py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded border border-zinc-800 transition flex items-center justify-center gap-1">
+            <i data-lucide="file-text" class="w-3 h-3 text-amber-400"></i>
+            <span>Muat Demo</span>
+          </button>
+          <button onclick="confirmClearAll()" id="btn-clear-all" class="py-1.5 px-2 bg-zinc-900 hover:bg-rose-950/40 hover:border-rose-800 text-zinc-400 hover:text-rose-300 rounded border border-zinc-800 transition flex items-center justify-center gap-1">
+            <i data-lucide="trash-2" class="w-3 h-3 text-rose-400"></i>
+            <span>Kosongkan</span>
           </button>
         </div>
       </div>
 
-      <!-- Ingest Document Area -->
-      <div>
-        <label class="block text-[11px] font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Ingest Document (Max 10MB)</label>
-        <div id="dropzone" class="border border-dashed border-zinc-800 hover:border-zinc-600 bg-zinc-950/60 rounded p-4 text-center cursor-pointer transition">
-          <input type="file" id="file-input" class="hidden" accept=".pdf,.txt">
-          <i data-lucide="file-plus" class="w-5 h-5 mx-auto text-zinc-400 transition mb-1"></i>
-          <p class="text-xs text-zinc-300 font-medium">Select PDF or TXT</p>
-          <p class="text-[10px] text-zinc-400 mt-0.5">Sentence-boundary chunking</p>
+      <!-- Active Documents List -->
+      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
+        <div class="flex items-center justify-between text-[10px] text-zinc-500 uppercase tracking-wider mb-1">
+          <span>Daftar Dokumen Aktif</span>
+          <span id="total-tokens-badge">~0 tokens</span>
+        </div>
+
+        <!-- Dynamic Documents Container -->
+        <div id="documents-container" class="space-y-2">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <!-- Chunks Explorer Collapsible -->
+        <div class="mt-4 pt-3 border-t border-borderSubtle">
+          <button onclick="toggleChunksModal()" class="w-full py-1.5 px-2 bg-zinc-900/60 hover:bg-zinc-800/80 text-zinc-400 hover:text-zinc-200 border border-zinc-800 rounded transition flex items-center justify-between text-[11px]">
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+              <span>Lihat Detail Chunks</span>
+            </span>
+            <span class="text-[10px] bg-zinc-800 px-1 rounded" id="chunks-sub-badge">0</span>
+          </button>
         </div>
       </div>
 
-      <!-- Chunks Explorer List -->
-      <div class="flex-1 flex flex-col min-h-0">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Indexed Chunks</span>
-          <span class="text-[10px] text-zinc-400">ID / Tokens</span>
+      <!-- Sidebar Footer: Model & Engine Settings -->
+      <div class="p-4 border-t border-borderSubtle bg-zinc-950/60 flex flex-col gap-2.5">
+        <div>
+          <label class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-1">LLM Model</label>
+          <select id="model-select" class="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600 font-mono">
+            <option value="opus" selected>Claude Opus 4.6 (Active)</option>
+            <option value="mistral">Mistral Large (Active)</option>
+            <option value="groq">Groq (Llama 3.3 70B)</option>
+          </select>
         </div>
-        
-        <div id="chunks-list" class="flex-1 overflow-y-auto space-y-1.5 pr-1">
-          <div class="text-center py-8 text-xs text-zinc-400">Loading indexed chunks...</div>
+
+        <div>
+          <label class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-1">Retrieval Mode</label>
+          <div class="grid grid-cols-2 gap-1 bg-zinc-900 p-0.5 rounded border border-zinc-800">
+            <button id="mode-hybrid-btn" onclick="setMode('hybrid')" class="py-1 rounded text-[11px] font-semibold bg-zinc-100 text-black transition">
+              Hybrid RRF
+            </button>
+            <button id="mode-naive-btn" onclick="setMode('naive')" class="py-1 rounded text-[11px] text-zinc-400 hover:text-white transition">
+              Naive Vector
+            </button>
+          </div>
         </div>
       </div>
 
     </aside>
 
-    <!-- ---------------- COLUMN 2: EXECUTION CONSOLE (6 cols) ---------------- -->
-    <section class="col-span-6 flex flex-col bg-[#08080a] overflow-hidden">
+    <!-- ---------------- CENTER WORKBENCH: CHAT & QUERY CONSOLE ---------------- -->
+    <main class="flex-1 flex flex-col bg-darkBg overflow-hidden">
 
-      <!-- Query Command Bar -->
-      <div class="p-4 border-b border-[#1f1f25] bg-[#0c0c0e]">
-        <div class="relative flex items-center gap-2">
-          <div class="relative flex-1 flex items-center">
-            <span class="absolute left-3.5 font-mono text-zinc-400 text-xs select-none">&gt;</span>
+      <!-- Query / Chat Feed -->
+      <div id="chat-feed" class="flex-1 overflow-y-auto p-6 space-y-6">
+        
+        <!-- Welcome Hero Banner (Shows when feed is clean) -->
+        <div id="welcome-card" class="max-w-3xl mx-auto card-border rounded-xl p-6 transition">
+          <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-amber-400 shrink-0">
+              <i data-lucide="sparkles" class="w-5 h-5"></i>
+            </div>
+            <div class="flex-1">
+              <h2 class="text-sm font-bold text-white mb-1">Albatross Observable Hybrid Retrieval</h2>
+              <p class="text-xs text-zinc-400 leading-relaxed" id="welcome-description">
+                Sistem pencarian informasi hybrid menggabungkan <strong>BM25 Okapi (Sparse)</strong> dan <strong>1024-dim Dense Vector</strong> dengan pembobotan <strong>Reciprocal Rank Fusion (RRF)</strong> dan Cross-Score Reranking.
+              </p>
+              
+              <!-- Dynamic Preset Chips -->
+              <div id="preset-chips-container" class="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap gap-2 text-xs font-mono">
+                <span class="text-zinc-500 text-[11px] self-center">Contoh Pertanyaan Demo:</span>
+                <button onclick="setQuery('Berapa rasio solvabilitas perusahaan pada kuartal ketiga tahun 2024?')" class="px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-600 text-zinc-300 transition">
+                  Solvabilitas Q3 2024
+                </button>
+                <button onclick="setQuery('Kapan data pengguna wajib dihapus menurut Pasal 28 UU PDP?')" class="px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-600 text-zinc-300 transition">
+                  Pasal 28 UU PDP
+                </button>
+                <button onclick="setQuery('Berapa proyeksi laba bersih tahun 2025?')" class="px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-rose-400 transition">
+                  Uji Anti-Halusinasi
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bottom Query Input Bar -->
+      <div class="p-4 border-t border-borderSubtle bg-sidebarBg/80">
+        <div class="max-w-4xl mx-auto flex items-center gap-2">
+          <div class="relative flex-1">
             <input 
               type="text" 
               id="query-input" 
               maxlength="2000"
-              placeholder="Execute query across knowledge base..."
-              class="w-full bg-[#111114] border border-zinc-800 focus:border-zinc-500 rounded py-2 pl-8 pr-20 text-xs text-zinc-100 placeholder-zinc-400 focus:outline-none font-mono transition"
+              placeholder="Ketik pertanyaan untuk dokumen di knowledge base..."
+              class="w-full bg-[#141418] border border-zinc-800 focus:border-zinc-500 rounded-lg py-2.5 pl-4 pr-24 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none font-mono transition"
               onkeydown="if(event.key==='Enter') executeQuery()"
             >
             <button 
               onclick="executeQuery()"
               id="run-btn"
-              class="absolute right-1.5 px-3 py-1 bg-white hover:bg-zinc-200 text-black font-mono font-semibold text-xs rounded transition flex items-center gap-1"
+              class="absolute right-1.5 top-1.5 bottom-1.5 px-3 bg-white hover:bg-zinc-200 text-black font-mono font-bold text-xs rounded transition flex items-center gap-1"
             >
               <span>RUN</span>
               <i data-lucide="corner-down-left" class="w-3 h-3"></i>
             </button>
           </div>
 
-          <!-- COMPARE A/B Button -->
+          <!-- A/B Compare Button -->
           <button 
             onclick="executeCompare()"
             id="compare-btn"
-            title="Execute simultaneously on Naive Vector vs Albatross Hybrid"
-            class="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-amber-400 font-mono text-xs rounded transition flex items-center gap-1.5 shrink-0"
+            title="Bandingkan langsung performa Naive Vector vs Hybrid RRF secara simultan"
+            class="px-3.5 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-amber-400 font-mono text-xs rounded-lg transition flex items-center gap-1.5 shrink-0"
           >
-            <i data-lucide="columns-2" class="w-3.5 h-3.5"></i>
+            <i data-lucide="columns-2" class="w-4 h-4"></i>
             <span class="font-bold">COMPARE A/B</span>
           </button>
         </div>
-
-        <!-- Presets -->
-        <div class="flex items-center gap-2 mt-3 overflow-x-auto text-[11px] font-mono">
-          <span class="text-zinc-400 shrink-0 text-[10px]">PRESETS:</span>
-          <button onclick="setQuery('Berapa rasio solvabilitas perusahaan pada kuartal ketiga tahun 2024?')" class="px-2.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white transition shrink-0">
-            Solvabilitas Q3 2024
-          </button>
-          <button onclick="setQuery('Kapan data pengguna wajib dihapus menurut Pasal 28 UU PDP?')" class="px-2.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white transition shrink-0">
-            Pasal 28 UU PDP
-          </button>
-          <button onclick="setQuery('Berapa proyeksi laba bersih tahun 2025?')" class="px-2.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-rose-400 transition shrink-0">
-            Anti-Hallucination
-          </button>
-        </div>
       </div>
 
-      <!-- Execution Feed -->
-      <div id="runs-container" class="flex-1 overflow-y-auto p-5 space-y-4">
-        <!-- Initial Guidance Banner -->
-        <div id="welcome-banner" class="border border-zinc-800/80 bg-[#0d0d10] p-5 rounded">
-          <div class="flex items-start gap-3.5">
-            <div class="w-8 h-8 rounded bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-300 shrink-0 font-mono text-xs">
-              01
-            </div>
-            <div>
-              <div class="flex items-center gap-2 mb-1">
-                <h2 class="text-xs font-bold font-mono text-zinc-200 uppercase tracking-wider">Observable Retrieval Pipeline Active</h2>
-                <span class="text-[10px] font-mono bg-zinc-800 text-amber-400 border border-zinc-700 px-1.5 py-0.2 rounded">A/B Ready</span>
-              </div>
-              <p class="text-xs text-zinc-400 leading-relaxed">
-                Ketik pertanyaan atau klik <strong>COMPARE A/B</strong> untuk membandingkan langsung performa 
-                <strong>Naive Vector RAG</strong> vs <strong>Albatross Hybrid + Reranker</strong> secara berdampingan.
-              </p>
-              <div class="mt-3 flex items-center gap-4 text-[10px] font-mono text-zinc-400">
-                <span>• In-Memory Matrix</span>
-                <span>• Strict Grounding</span>
-                <span>• Sub-Millisecond Trace</span>
-              </div>
-            </div>
-          </div>
-        </div>
+    </main>
+
+  </div>
+
+  <!-- ================= MODAL: CHUNKS EXPLORER ================= -->
+  <div id="chunks-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-6 font-mono">
+    <div class="bg-[#121216] border border-zinc-800 rounded-xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+      <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <span class="font-bold text-xs text-white uppercase tracking-wider flex items-center gap-2">
+          <i data-lucide="layers" class="w-4 h-4 text-amber-400"></i>
+          Semua Chunks Terindeks (<span id="modal-chunks-count">0</span>)
+        </span>
+        <button onclick="toggleChunksModal()" class="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800 transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
       </div>
-
-    </section>
-
-    <!-- ---------------- COLUMN 3: DEEP TELEMETRY (3 cols) ---------------- -->
-    <aside class="col-span-3 border-l border-[#1f1f25] bg-[#0c0c0e] p-4 flex flex-col gap-4 overflow-y-auto font-mono">
-      
-      <!-- Telemetry Header -->
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-wider">
-          <i data-lucide="cpu" class="w-3.5 h-3.5 text-zinc-400"></i> Latency Waterfall
-        </div>
-        <span class="text-[10px] text-amber-400 font-bold" id="total-time-badge">0.0 ms</span>
+      <div id="modal-chunks-list" class="p-5 space-y-2 overflow-y-auto text-xs flex-1">
+        <!-- Chunks list rendered here -->
       </div>
+    </div>
+  </div>
 
-      <!-- Waterfall Card -->
-      <div class="p-3 rounded border border-zinc-800/90 bg-[#101014] flex flex-col gap-2">
-        <div class="text-[10px] text-zinc-400 font-semibold flex items-center justify-between">
-          <span>PIPELINE STEP</span>
-          <span>DURATION</span>
-        </div>
-
-        <div id="waterfall-bars" class="space-y-2 text-xs">
-          <div class="text-center py-6 text-[11px] text-zinc-400">
-            Awaiting query execution...
-          </div>
-        </div>
-      </div>
-
-      <!-- Ranked Chunks with Score Meter -->
-      <div class="flex-1 flex flex-col min-h-0">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Fidelity Chunks</span>
-          <span class="text-[10px] text-zinc-400">Score</span>
-        </div>
-
-        <div id="retrieved-chunks-list" class="space-y-2 overflow-y-auto flex-1 pr-1">
-          <div class="text-center py-8 text-xs text-zinc-400">
-            No context retrieved yet.
-          </div>
-        </div>
-      </div>
-
-      <!-- Token & Cost Economics -->
-      <div class="p-3 rounded border border-zinc-800/90 bg-[#101014] text-[11px] space-y-1.5">
-        <div class="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Session Economics</div>
-        <div class="flex justify-between text-zinc-300">
-          <span class="text-zinc-400">Prompt / Completion:</span>
-          <span class="text-zinc-200 font-semibold" id="tokens-count">- / -</span>
-        </div>
-        <div class="flex justify-between text-zinc-300">
-          <span class="text-zinc-400">Query Cost:</span>
-          <span class="text-amber-400 font-semibold" id="query-cost-val">$0.000000</span>
-        </div>
-      </div>
-
-    </aside>
-
-  </main>
-
-  <!-- ================= BENCHMARK MODAL ================= -->
+  <!-- ================= MODAL: BENCHMARK RAGAS ================= -->
   <div id="benchmark-modal" class="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center hidden p-6 font-mono">
-    <div class="bg-[#0f0f13] border border-zinc-800 rounded-lg w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
-      
-      <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-[#141419]">
-        <div class="flex items-center gap-2.5">
-          <span class="font-bold text-xs text-white uppercase tracking-wider">Quantitative Benchmark Studio</span>
-        </div>
+    <div class="bg-[#121216] border border-zinc-800 rounded-xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+      <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <span class="font-bold text-xs text-white uppercase tracking-wider flex items-center gap-2">
+          <i data-lucide="gauge" class="w-4 h-4 text-amber-400"></i>
+          Evaluasi Kuantitatif RAGAS
+        </span>
         <button onclick="closeBenchmarkModal()" class="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800 transition">
           <i data-lucide="x" class="w-4 h-4"></i>
         </button>
       </div>
-
       <div class="p-5 space-y-4 overflow-y-auto text-xs">
-        <p class="text-zinc-400 leading-relaxed">
-          Automated empirical benchmark across financial & regulatory test cases. Compares standard <strong>Naive Vector Search</strong> against <strong>Albatross Hybrid + Reranker</strong>.
+        <p class="text-zinc-400 leading-relaxed font-sans">
+          Eksperimen evaluasi empiris otomatis membandingkan akurasi <strong>Naive Vector Search</strong> vs <strong>Albatross Hybrid + Reranker</strong> pada 4 metrik standar industri.
         </p>
 
-        <button onclick="runBenchmarkAction()" id="bench-trigger-btn" class="w-full py-2 bg-white hover:bg-zinc-200 text-black text-xs font-bold rounded transition flex items-center justify-center gap-2">
+        <button onclick="runBenchmarkAction()" id="bench-trigger-btn" class="w-full py-2.5 bg-white hover:bg-zinc-200 text-black text-xs font-bold rounded-lg transition flex items-center justify-center gap-2">
           <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
-          <span>RUN RAGAS BENCHMARK EXPERIMENT</span>
+          <span>JALANKAN EVALUASI BENCHMARK</span>
         </button>
 
         <div id="benchmark-results" class="hidden space-y-4 pt-2">
           <div class="grid grid-cols-4 gap-2 text-center">
             <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
-              <span class="text-[9px] text-zinc-400 uppercase">Context Precision</span>
+              <span class="text-[9px] text-zinc-500 uppercase">Context Precision</span>
               <div class="text-base font-bold text-zinc-100 mt-0.5" id="m-precision">--%</div>
-              <span class="text-[9px] text-emerald-400">+13.3%</span>
+              <span class="text-[9px] text-emerald-400 font-semibold">+13.3%</span>
             </div>
             <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
-              <span class="text-[9px] text-zinc-400 uppercase">Context Recall</span>
+              <span class="text-[9px] text-zinc-500 uppercase">Context Recall</span>
               <div class="text-base font-bold text-zinc-100 mt-0.5" id="m-recall">--%</div>
-              <span class="text-[9px] text-emerald-400">+20.0%</span>
+              <span class="text-[9px] text-emerald-400 font-semibold">+20.0%</span>
             </div>
             <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
-              <span class="text-[9px] text-zinc-400 uppercase">Faithfulness</span>
-              <div class="text-base font-bold text-emerald-400 mt-0.5" id="m-faith">100%</div>
-              <span class="text-[9px] text-zinc-400">Zero Hallucination</span>
+              <span class="text-[9px] text-zinc-500 uppercase">Faithfulness</span>
+              <div class="text-base font-bold text-zinc-100 mt-0.5" id="m-faith">1.00</div>
+              <span class="text-[9px] text-zinc-500">Zero-Hallucination</span>
             </div>
             <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800">
-              <span class="text-[9px] text-zinc-400 uppercase">Latency Overhead</span>
-              <div class="text-base font-bold text-amber-400 mt-0.5" id="m-lat">0.8 ms</div>
-              <span class="text-[9px] text-zinc-400">&lt; 0.5ms Delta</span>
+              <span class="text-[9px] text-zinc-500 uppercase">Answer Relevance</span>
+              <div class="text-base font-bold text-zinc-100 mt-0.5" id="m-relevance">0.95</div>
+              <span class="text-[9px] text-emerald-400 font-semibold">High Quality</span>
             </div>
           </div>
-
-          <div class="border border-zinc-800 rounded overflow-hidden text-[11px]">
-            <table class="w-full text-left">
-              <thead class="bg-zinc-900 text-zinc-400 border-b border-zinc-800">
-                <tr>
-                  <th class="py-2 px-3">Metric</th>
-                  <th class="py-2 px-3">Naive Vector</th>
-                  <th class="py-2 px-3 text-zinc-100">Albatross Hybrid</th>
-                  <th class="py-2 px-3 text-emerald-400">Delta</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-zinc-800/80 text-zinc-300">
-                <tr>
-                  <td class="py-2 px-3">Context Precision</td>
-                  <td class="py-2 px-3 text-zinc-400" id="tb-n-prec">75.0%</td>
-                  <td class="py-2 px-3 text-zinc-100 font-semibold" id="tb-h-prec">85.0%</td>
-                  <td class="py-2 px-3 text-emerald-400">+13.3%</td>
-                </tr>
-                <tr>
-                  <td class="py-2 px-3">Context Recall</td>
-                  <td class="py-2 px-3 text-zinc-400" id="tb-n-rec">75.0%</td>
-                  <td class="py-2 px-3 text-zinc-100 font-semibold" id="tb-h-rec">90.0%</td>
-                  <td class="py-2 px-3 text-emerald-400">+20.0%</td>
-                </tr>
-                <tr>
-                  <td class="py-2 px-3">Faithfulness</td>
-                  <td class="py-2 px-3 text-zinc-400" id="tb-n-faith">85.0%</td>
-                  <td class="py-2 px-3 text-emerald-400 font-semibold" id="tb-h-faith">100.0%</td>
-                  <td class="py-2 px-3 text-emerald-400">Grounded</td>
-                </tr>
-                <tr>
-                  <td class="py-2 px-3">Turnaround Latency</td>
-                  <td class="py-2 px-3 text-zinc-400" id="tb-n-lat">0.5 ms</td>
-                  <td class="py-2 px-3 text-zinc-100" id="tb-h-lat">0.8 ms</td>
-                  <td class="py-2 px-3 text-zinc-400">+0.3 ms</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <div id="detailed-bench-list" class="space-y-1.5 pt-2"></div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ================= CLIENT LOGIC ================= -->
+  <!-- ================= JAVASCRIPT LOGIC ================= -->
   <script>
-    lucide.createIcons();
-
     let currentMode = 'hybrid';
     let runCounter = 0;
-    let sessionCost = 0.0;
+    let isQueryRunning = false;
+    let cachedDocuments = [];
+    let cachedChunks = [];
 
-    // XSS Sanitizer Helper
-    function escapeHtml(str) {
-      if (!str) return '';
-      return String(str)
+    function escapeHtml(text) {
+      if (!text) return '';
+      return String(text)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
@@ -436,102 +338,275 @@
       const hybridBtn = document.getElementById('mode-hybrid-btn');
       const naiveBtn = document.getElementById('mode-naive-btn');
       if (mode === 'hybrid') {
-        hybridBtn.className = 'px-2.5 py-1 rounded text-xs transition-all bg-zinc-100 text-black font-semibold flex items-center gap-1.5';
-        naiveBtn.className = 'px-2.5 py-1 rounded text-xs transition-all text-zinc-400 hover:text-white flex items-center gap-1.5';
+        hybridBtn.className = 'py-1 rounded text-[11px] font-semibold bg-zinc-100 text-black transition';
+        naiveBtn.className = 'py-1 rounded text-[11px] text-zinc-400 hover:text-white transition';
       } else {
-        naiveBtn.className = 'px-2.5 py-1 rounded text-xs transition-all bg-zinc-100 text-black font-semibold flex items-center gap-1.5';
-        hybridBtn.className = 'px-2.5 py-1 rounded text-xs transition-all text-zinc-400 hover:text-white flex items-center gap-1.5';
+        naiveBtn.className = 'py-1 rounded text-[11px] font-semibold bg-zinc-100 text-black transition';
+        hybridBtn.className = 'py-1 rounded text-[11px] text-zinc-400 hover:text-white transition';
       }
     }
 
     function setQuery(text) {
-      document.getElementById('query-input').value = text;
+      const input = document.getElementById('query-input');
+      input.value = text;
+      input.focus();
     }
 
-    async function loadStatusAndChunks() {
+    // Load Documents and Status
+    async function loadDocumentsAndStatus() {
       try {
-        const res = await fetch('/api/status');
-        if (!res.ok) return;
-        const data = await res.json();
-        document.getElementById('chunks-badge').textContent = `${data.chunks_indexed} chunks`;
+        const [statusRes, docsRes, chunksRes] = await Promise.all([
+          fetch('/api/status'),
+          fetch('/api/documents'),
+          fetch('/api/chunks')
+        ]);
 
-        const chunksRes = await fetch('/api/chunks');
-        if (!chunksRes.ok) return;
-        const chunks = await chunksRes.json();
-        renderChunksList(chunks);
-      } catch (e) {
-        console.error("Status load failed", e);
+        if (statusRes.ok) {
+          const s = await statusRes.json();
+          document.getElementById('header-chunks-count').textContent = `${s.chunks_indexed} chunks`;
+          document.getElementById('chunks-sub-badge').textContent = s.chunks_indexed;
+          document.getElementById('modal-chunks-count').textContent = s.chunks_indexed;
+        }
+
+        if (docsRes.ok) {
+          cachedDocuments = await docsRes.json();
+          renderDocumentsList(cachedDocuments);
+        }
+
+        if (chunksRes.ok) {
+          cachedChunks = await chunksRes.json();
+          renderModalChunks(cachedChunks);
+        }
+      } catch (err) {
+        console.error("Gagal memuat status:", err);
       }
     }
 
-    function renderChunksList(chunks) {
-      const container = document.getElementById('chunks-list');
+    // Render list of active documents with DELETE button!
+    function renderDocumentsList(docs) {
+      const container = document.getElementById('documents-container');
+      const docCountBadge = document.getElementById('doc-count-badge');
+      const totalTokensBadge = document.getElementById('total-tokens-badge');
+      const presetContainer = document.getElementById('preset-chips-container');
+      
+      docCountBadge.textContent = `${docs.length} Dokumen`;
+
+      let totalTokens = 0;
+      docs.forEach(d => totalTokens += (d.token_count || 0));
+      totalTokensBadge.textContent = `~${totalTokens} tok`;
+
+      if (docs.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-6 px-3 border border-dashed border-zinc-800/80 rounded-lg bg-zinc-950/40">
+            <p class="text-zinc-400 text-xs font-semibold">Knowledge Base Kosong</p>
+            <p class="text-zinc-600 text-[10px] mt-1">Unggah PDF/TXT atau klik 'Muat Demo'.</p>
+          </div>
+        `;
+        if (presetContainer) presetContainer.classList.add('hidden');
+        return;
+      }
+
+      if (presetContainer) {
+        const hasDemo = docs.some(d => d.is_demo);
+        if (hasDemo) {
+          presetContainer.classList.remove('hidden');
+        } else {
+          presetContainer.classList.add('hidden');
+        }
+      }
+
+      container.innerHTML = '';
+      docs.forEach(doc => {
+        const div = document.createElement('div');
+        div.className = 'p-2.5 rounded-lg border border-zinc-800 bg-zinc-950 hover:border-zinc-700 transition flex items-center justify-between gap-2';
+        div.innerHTML = `
+          <div class="flex items-center gap-2 overflow-hidden">
+            <i data-lucide="${doc.is_demo ? 'book-open' : 'file-text'}" class="w-4 h-4 ${doc.is_demo ? 'text-amber-400' : 'text-zinc-400'} shrink-0"></i>
+            <div class="truncate">
+              <p class="text-xs text-zinc-200 font-semibold truncate" title="${escapeHtml(doc.name)}">${escapeHtml(doc.name)}</p>
+              <p class="text-[10px] text-zinc-500">${doc.chunk_count} chunks • ~${doc.token_count} tok</p>
+            </div>
+          </div>
+          <button 
+            onclick="deleteDocument('${escapeHtml(doc.name)}')" 
+            title="Hapus dokumen ini dari knowledge base"
+            class="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-950/40 rounded transition shrink-0"
+          >
+            <i data-lucide="trash" class="w-3.5 h-3.5"></i>
+          </button>
+        `;
+        container.appendChild(div);
+      });
+      lucide.createIcons();
+    }
+
+    // Render Chunks in Modal
+    function renderModalChunks(chunks) {
+      const container = document.getElementById('modal-chunks-list');
+      if (chunks.length === 0) {
+        container.innerHTML = '<div class="text-center py-8 text-zinc-500">Tidak ada chunks terindeks.</div>';
+        return;
+      }
       container.innerHTML = '';
       chunks.forEach(c => {
         const div = document.createElement('div');
-        div.className = 'p-2 rounded border border-zinc-800/80 bg-zinc-950/60 text-xs font-mono hover:border-zinc-700 transition cursor-pointer';
+        div.className = 'p-3 rounded-lg border border-zinc-800 bg-zinc-950/80';
         div.innerHTML = `
-          <div class="flex justify-between items-center text-[10px] text-zinc-400 mb-1">
-            <span class="text-zinc-200 font-bold">#CHUNK ${escapeHtml(c.chunk_id)}</span>
-            <span>p.${escapeHtml(c.page)} • ~${escapeHtml(c.token_count)} tok</span>
+          <div class="flex justify-between items-center text-[10px] text-zinc-500 mb-1">
+            <span class="text-amber-400 font-bold">${escapeHtml(c.chunk_id)}</span>
+            <span>${escapeHtml(c.source)} • hal ${escapeHtml(c.page)}</span>
           </div>
-          <p class="text-zinc-400 line-clamp-2 text-[11px] leading-relaxed">${escapeHtml(c.snippet)}</p>
+          <p class="text-zinc-300 text-[11px] leading-relaxed font-sans">${escapeHtml(c.snippet)}</p>
         `;
         container.appendChild(div);
       });
     }
 
-    // Standard Single Mode Execution
+    function toggleChunksModal() {
+      const modal = document.getElementById('chunks-modal');
+      modal.classList.toggle('hidden');
+      if (!modal.classList.contains('hidden')) {
+        lucide.createIcons();
+      }
+    }
+
+    // Delete a specific document
+    async function deleteDocument(docName) {
+      if (!confirm(`Hapus dokumen "${docName}" dari knowledge base?`)) return;
+      try {
+        const res = await fetch('/api/documents/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: docName })
+        });
+        if (res.ok) {
+          await loadDocumentsAndStatus();
+        }
+      } catch (err) {
+        alert("Gagal menghapus dokumen: " + err.message);
+      }
+    }
+
+    // Clear all documents
+    async function confirmClearAll() {
+      if (!confirm("Kosongkan seluruh knowledge base? Semua chunks akan dihapus.")) return;
+      try {
+        const res = await fetch('/api/documents/clear', { method: 'POST' });
+        if (res.ok) {
+          await loadDocumentsAndStatus();
+        }
+      } catch (err) {
+        alert("Gagal mengosongkan knowledge base: " + err.message);
+      }
+    }
+
+    // Reload demo sample corpus
+    async function reloadSample() {
+      try {
+        const res = await fetch('/api/reload-sample', { method: 'POST' });
+        if (res.ok) {
+          await loadDocumentsAndStatus();
+        }
+      } catch (err) {
+        alert("Gagal memuat demo: " + err.message);
+      }
+    }
+
+    // Execute Query (SSE Streaming)
     async function executeQuery() {
       const input = document.getElementById('query-input');
       const query = input.value.trim();
-      if (!query) return;
+      if (!query || isQueryRunning) return;
 
+      isQueryRunning = true;
       runCounter++;
       const provider = document.getElementById('model-select').value;
-      const modelLabel = provider === 'opus' ? 'claude-opus-4-6' : (provider === 'mistral' ? 'mistral-large-latest' : 'llama-3.3-70b');
+      const modelLabel = provider === 'opus' ? 'Claude Opus 4.6' : (provider === 'mistral' ? 'Mistral Large' : 'Groq Llama 3.3');
 
-      const welcome = document.getElementById('welcome-banner');
+      // Hide welcome card
+      const welcome = document.getElementById('welcome-card');
       if (welcome) welcome.remove();
 
-      const runsContainer = document.getElementById('runs-container');
-      const runCard = document.createElement('div');
-      runCard.className = 'terminal-card rounded p-4 shadow-lg flex flex-col gap-3 font-mono';
-      runCard.innerHTML = `
-        <div class="flex items-center justify-between border-b border-zinc-800 pb-2.5 text-xs">
-          <div class="flex items-center gap-2.5">
-            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-200 border border-zinc-700">RUN #${runCounter}</span>
-            <span class="text-zinc-400">${escapeHtml(modelLabel)}</span>
-            <span class="text-zinc-400 uppercase text-[10px]">| ${escapeHtml(currentMode.toUpperCase())}</span>
+      const feed = document.getElementById('chat-feed');
+
+      // 1. Append User Bubble
+      const userBubble = document.createElement('div');
+      userBubble.className = 'flex justify-end';
+      userBubble.innerHTML = `
+        <div class="max-w-xl bg-zinc-800/90 text-white text-xs px-4 py-2.5 rounded-2xl rounded-tr-sm border border-zinc-700/60 font-sans shadow-md">
+          ${escapeHtml(query)}
+        </div>
+      `;
+      feed.appendChild(userBubble);
+
+      // 2. Append Assistant Response Container
+      const aiCard = document.createElement('div');
+      aiCard.className = 'max-w-3xl card-border rounded-xl p-5 shadow-lg flex flex-col gap-4 font-mono transition';
+      aiCard.innerHTML = `
+        <div class="flex items-center justify-between border-b border-zinc-800/80 pb-3 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="w-6 h-6 rounded bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white text-[10px] font-bold">AL</span>
+            <span class="font-bold text-zinc-200">${escapeHtml(modelLabel)}</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-amber-400 font-semibold uppercase">${escapeHtml(currentMode)}</span>
           </div>
-          <span class="text-[10px] text-emerald-400 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded">
-            GROUNDED
+          <span class="text-[10px] text-emerald-400 bg-emerald-950/40 border border-emerald-800/50 px-2 py-0.5 rounded">
+            GROUNDED VERIFIED
           </span>
         </div>
 
-        <div class="text-xs font-semibold text-white flex items-start gap-2">
-          <span class="text-zinc-400">&gt;</span>
-          <span>${escapeHtml(query)}</span>
+        <!-- Streaming Answer Text -->
+        <div class="text-xs text-zinc-200 leading-relaxed font-sans">
+          <div id="answer-text-${runCounter}" class="whitespace-pre-wrap"><span class="text-zinc-500 font-mono text-[11px]">Mencari dokumen dan mengeksekusi model...</span></div>
         </div>
 
-        <div class="bg-[#09090c] border border-zinc-800/90 rounded p-3 text-xs text-zinc-200 leading-relaxed font-sans">
-          <div id="answer-text-${runCounter}" class="whitespace-pre-wrap"><span class="text-zinc-400 font-mono text-[11px]">Retrieving and executing model inference...</span></div>
-        </div>
-
-        <div id="citations-${runCounter}" class="pt-2 border-t border-zinc-800/80 hidden">
-          <div class="text-[10px] font-bold text-zinc-400 uppercase mb-1.5">
-            Document Attributions
+        <!-- Collapsible 1: Retrieved Chunks Accordion -->
+        <div class="border border-zinc-800/80 rounded-lg overflow-hidden bg-zinc-950/40">
+          <button onclick="toggleAccordion('chunks-acc-${runCounter}')" class="w-full px-3 py-2 bg-zinc-900/60 hover:bg-zinc-900 text-left text-xs font-semibold text-zinc-300 flex items-center justify-between transition">
+            <span class="flex items-center gap-2">
+              <i data-lucide="file-check" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span>Sumber Dokumen Terverifikasi (<span id="retrieved-count-${runCounter}">0</span> chunks)</span>
+            </span>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-500 transition-transform" id="chevron-chunks-acc-${runCounter}"></i>
+          </button>
+          <div id="chunks-acc-${runCounter}" class="hidden p-3 space-y-2 border-t border-zinc-800/80 text-[11px]">
+            <!-- Rendered Chunks -->
           </div>
-          <div class="flex flex-wrap gap-1.5" id="citation-chips-${runCounter}"></div>
+        </div>
+
+        <!-- Collapsible 2: Latency Waterfall Accordion -->
+        <div class="border border-zinc-800/80 rounded-lg overflow-hidden bg-zinc-950/40">
+          <button onclick="toggleAccordion('telemetry-acc-${runCounter}')" class="w-full px-3 py-2 bg-zinc-900/60 hover:bg-zinc-900 text-left text-xs font-semibold text-zinc-300 flex items-center justify-between transition">
+            <span class="flex items-center gap-2">
+              <i data-lucide="activity" class="w-3.5 h-3.5 text-emerald-400"></i>
+              <span>Latency Waterfall Stopwatch &amp; Cost</span>
+            </span>
+            <span class="text-[10px] text-amber-400 font-bold" id="total-latency-${runCounter}">-- ms</span>
+          </button>
+          <div id="telemetry-acc-${runCounter}" class="hidden p-3 space-y-3 border-t border-zinc-800/80 text-[11px]">
+            <div id="waterfall-bars-${runCounter}" class="space-y-1.5">
+              <!-- Rendered Bars -->
+            </div>
+            <div class="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-[10px] text-zinc-400">
+              <span id="token-info-${runCounter}">Prompt: -- | Output: --</span>
+              <span class="text-amber-400 font-bold" id="cost-info-${runCounter}">Cost: $0.000000</span>
+            </div>
+          </div>
         </div>
       `;
-
-      runsContainer.prepend(runCard);
+      feed.appendChild(aiCard);
+      feed.scrollTop = feed.scrollHeight;
       lucide.createIcons();
 
+      const answerDiv = document.getElementById(`answer-text-${runCounter}`);
+      const chunksAcc = document.getElementById(`chunks-acc-${runCounter}`);
+      const chunksCountSpan = document.getElementById(`retrieved-count-${runCounter}`);
+      const waterfallDiv = document.getElementById(`waterfall-bars-${runCounter}`);
+      const totalLatencySpan = document.getElementById(`total-latency-${runCounter}`);
+      const tokenInfoSpan = document.getElementById(`token-info-${runCounter}`);
+      const costInfoSpan = document.getElementById(`cost-info-${runCounter}`);
+
+      answerDiv.textContent = '';
       input.value = '';
-      const answerElement = document.getElementById(`answer-text-${runCounter}`);
-      let answerBuffer = '';
 
       try {
         const response = await fetch('/api/query', {
@@ -540,317 +615,333 @@
           body: JSON.stringify({ query, mode: currentMode, provider })
         });
 
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.detail || `Server error ${response.status}`);
-        }
-
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        answerElement.textContent = '';
+        let buffer = '';
 
         while (true) {
-          const { value, done } = await reader.read();
+          const { done, value } = await reader.read();
           if (done) break;
 
-          const chunkText = decoder.decode(value);
-          const lines = chunkText.split('\n');
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
 
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const dataStr = line.slice(6).trim();
-              if (dataStr === '[DONE]') break;
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data: ')) {
+              const dataStr = trimmed.slice(6);
+              if (dataStr === '[DONE]') continue;
+
               try {
-                const payload = JSON.parse(dataStr);
-                if (payload.type === 'meta') {
-                  renderRetrievedChunks(payload.retrieved_chunks);
-                  renderCitationChips(runCounter, payload.retrieved_chunks);
-                } else if (payload.type === 'delta') {
-                  answerBuffer += payload.content;
-                  answerElement.textContent = answerBuffer;
-                } else if (payload.type === 'error') {
-                  answerElement.textContent = `Error: ${payload.message}`;
-                } else if (payload.type === 'telemetry') {
-                  renderWaterfall(payload.timings, payload.total_latency_ms);
-                  document.getElementById('tokens-count').textContent = `${payload.input_tokens} / ${payload.output_tokens}`;
-                  document.getElementById('query-cost-val').textContent = `$${payload.cost_usd.toFixed(6)}`;
-                  sessionCost += payload.cost_usd;
-                  document.getElementById('session-cost-hud').textContent = `$${sessionCost.toFixed(6)}`;
-                }
-              } catch (err) { }
-            }
-          }
-        }
-      } catch (error) {
-        answerElement.textContent = `Execution failed: ${error.message}`;
-      }
-    }
-
-    // Live A/B Compare
-    async function executeCompare() {
-      const input = document.getElementById('query-input');
-      const query = input.value.trim();
-      if (!query) return;
-
-      runCounter++;
-      const provider = document.getElementById('model-select').value;
-      const modelLabel = provider === 'opus' ? 'claude-opus-4-6' : (provider === 'mistral' ? 'mistral-large-latest' : 'llama-3.3-70b');
-
-      const welcome = document.getElementById('welcome-banner');
-      if (welcome) welcome.remove();
-
-      const runsContainer = document.getElementById('runs-container');
-      const compareCard = document.createElement('div');
-      compareCard.className = 'terminal-card rounded p-4 shadow-xl flex flex-col gap-3 font-mono border-zinc-700/80';
-      compareCard.innerHTML = `
-        <div class="flex items-center justify-between border-b border-zinc-800 pb-2.5 text-xs">
-          <div class="flex items-center gap-2.5">
-            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800/80">A/B SPLIT RUN #${runCounter}</span>
-            <span class="text-zinc-300 font-semibold">${escapeHtml(modelLabel)}</span>
-          </div>
-          <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Simultaneous Execution</span>
-        </div>
-
-        <div class="text-xs font-semibold text-white flex items-start gap-2">
-          <span class="text-zinc-400">&gt;</span>
-          <span>${escapeHtml(query)}</span>
-        </div>
-
-        <div class="grid grid-cols-2 gap-3 pt-1">
-          <!-- LEFT: NAIVE VECTOR SEARCH -->
-          <div class="p-3 rounded border border-zinc-800 bg-[#09090c] flex flex-col gap-2">
-            <div class="flex items-center justify-between border-b border-zinc-800/80 pb-1.5 text-[10px]">
-              <span class="text-zinc-400 font-bold uppercase flex items-center gap-1.5">
-                <i data-lucide="git-commit" class="w-3 h-3 text-zinc-400"></i> Naive Vector Search
-              </span>
-              <span class="text-zinc-500" id="time-naive-${runCounter}">running...</span>
-            </div>
-            <div class="text-xs text-zinc-300 font-sans leading-relaxed min-h-[90px] whitespace-pre-wrap" id="answer-naive-${runCounter}">
-              <span class="text-zinc-500 font-mono text-[11px] animate-pulse">Retrieving dense cosine vectors...</span>
-            </div>
-            <div class="pt-2 border-t border-zinc-900 text-[10px] flex items-center justify-between text-zinc-500" id="cite-naive-${runCounter}">
-              <span>Retrieval: Dense Cosine Top-3</span>
-            </div>
-          </div>
-
-          <!-- RIGHT: ALBATROSS HYBRID RRF -->
-          <div class="p-3 rounded border border-zinc-700 bg-[#0d0d12] flex flex-col gap-2 relative">
-            <div class="flex items-center justify-between border-b border-zinc-800/80 pb-1.5 text-[10px]">
-              <span class="text-amber-400 font-bold uppercase flex items-center gap-1.5">
-                <i data-lucide="layers" class="w-3 h-3 text-amber-400"></i> Albatross Hybrid RRF
-              </span>
-              <span class="text-amber-400" id="time-hybrid-${runCounter}">running...</span>
-            </div>
-            <div class="text-xs text-zinc-100 font-sans leading-relaxed min-h-[90px] whitespace-pre-wrap" id="answer-hybrid-${runCounter}">
-              <span class="text-amber-400 font-mono text-[11px] animate-pulse">Executing BM25 + Dense + RRF + Rerank...</span>
-            </div>
-            <div class="pt-2 border-t border-zinc-900 text-[10px] flex items-center justify-between text-zinc-400" id="cite-hybrid-${runCounter}">
-              <span class="text-emerald-400 font-semibold">Hybrid Verified Context</span>
-            </div>
-          </div>
-        </div>
-      `;
-
-      runsContainer.prepend(compareCard);
-      lucide.createIcons();
-      input.value = '';
-
-      streamToBox(query, 'naive', provider, `answer-naive-${runCounter}`, `time-naive-${runCounter}`, `cite-naive-${runCounter}`);
-      streamToBox(query, 'hybrid', provider, `answer-hybrid-${runCounter}`, `time-hybrid-${runCounter}`, `cite-hybrid-${runCounter}`);
-    }
-
-    async function streamToBox(query, mode, provider, textElemId, timeElemId, citeElemId) {
-      const textElem = document.getElementById(textElemId);
-      const timeElem = document.getElementById(timeElemId);
-      const citeElem = document.getElementById(citeElemId);
-      let buffer = '';
-
-      try {
-        const res = await fetch('/api/query', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, mode, provider })
-        });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.detail || `Server error ${res.status}`);
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        textElem.textContent = '';
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-
-          const chunkText = decoder.decode(value);
-          const lines = chunkText.split('\n');
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const dataStr = line.slice(6).trim();
-              if (dataStr === '[DONE]') break;
-              try {
-                const payload = JSON.parse(dataStr);
-                if (payload.type === 'delta') {
-                  buffer += payload.content;
-                  textElem.textContent = buffer;
-                } else if (payload.type === 'telemetry') {
-                  if (timeElem) timeElem.textContent = `${payload.total_latency_ms.toFixed(0)} ms`;
-                  if (mode === 'hybrid') {
-                    renderWaterfall(payload.timings, payload.total_latency_ms);
-                    sessionCost += payload.cost_usd;
-                    document.getElementById('session-cost-hud').textContent = `$${sessionCost.toFixed(6)}`;
-                  }
-                } else if (payload.type === 'meta') {
-                  if (mode === 'hybrid') {
-                    renderRetrievedChunks(payload.retrieved_chunks);
-                  }
-                  if (citeElem && payload.retrieved_chunks.length) {
-                    const topC = payload.retrieved_chunks[0];
-                    citeElem.innerHTML = `<span>Top Chunk #${escapeHtml(topC.chunk_id)}</span><span class="${mode === 'hybrid' ? 'text-amber-400' : 'text-zinc-400'} font-semibold">Score: ${topC.score.toFixed(3)}</span>`;
+                const event = JSON.parse(dataStr);
+                
+                // 1. Meta Event
+                if (event.type === 'meta') {
+                  const chunks = event.retrieved_chunks || [];
+                  chunksCountSpan.textContent = chunks.length;
+                  if (chunks.length === 0) {
+                    chunksAcc.innerHTML = '<div class="text-zinc-500 py-1">Tidak ada dokumen yang cocok.</div>';
+                  } else {
+                    chunksAcc.innerHTML = '';
+                    chunks.forEach(c => {
+                      const div = document.createElement('div');
+                      div.className = 'p-2 rounded bg-zinc-950 border border-zinc-800/80';
+                      div.innerHTML = `
+                        <div class="flex justify-between items-center text-[10px] text-zinc-500 mb-0.5">
+                          <span class="text-amber-400 font-bold">${escapeHtml(c.chunk_id)} (${escapeHtml(c.source)})</span>
+                          <span class="text-emerald-400 font-bold">Skor: ${c.score || 0}</span>
+                        </div>
+                        <p class="text-zinc-300 font-sans leading-relaxed">${escapeHtml(c.text)}</p>
+                      `;
+                      chunksAcc.appendChild(div);
+                    });
                   }
                 }
-              } catch (e) {}
+
+                // 2. Delta Event (Streaming Tokens)
+                if (event.type === 'delta') {
+                  answerDiv.textContent += event.content;
+                  feed.scrollTop = feed.scrollHeight;
+                }
+
+                // 3. Telemetry Event
+                if (event.type === 'telemetry') {
+                  totalLatencySpan.textContent = `${event.total_latency_ms} ms`;
+                  tokenInfoSpan.textContent = `Input: ${event.input_tokens} tok | Output: ${event.output_tokens} tok`;
+                  costInfoSpan.textContent = `Cost: $${(event.cost_usd || 0).toFixed(6)}`;
+                  document.getElementById('session-cost-hud').textContent = `$${(event.total_session_cost || 0).toFixed(6)}`;
+
+                  // Render waterfall bars
+                  waterfallDiv.innerHTML = '';
+                  const timings = event.timings || [];
+                  const maxDuration = Math.max(...timings.map(t => t.duration_ms), 1);
+
+                  timings.forEach(t => {
+                    const pct = Math.max(4, Math.min(100, (t.duration_ms / maxDuration) * 100));
+                    const row = document.createElement('div');
+                    row.className = 'space-y-0.5';
+                    row.innerHTML = `
+                      <div class="flex justify-between text-[10px]">
+                        <span class="text-zinc-400">${escapeHtml(t.step)}</span>
+                        <span class="text-zinc-200 font-bold">${t.duration_ms} ms</span>
+                      </div>
+                      <div class="w-full bg-zinc-900 rounded-full h-1.5 overflow-hidden">
+                        <div class="bg-amber-400 h-full rounded-full transition-all" style="width: ${pct}%"></div>
+                      </div>
+                    `;
+                    waterfallDiv.appendChild(row);
+                  });
+                }
+              } catch (e) {
+                console.error("Parse event error:", e);
+              }
             }
           }
         }
       } catch (err) {
-        textElem.textContent = `Stream error: ${err.message}`;
+        answerDiv.innerHTML = `<span class="text-rose-400">Error: ${escapeHtml(err.message)}</span>`;
+      } finally {
+        isQueryRunning = false;
+        feed.scrollTop = feed.scrollHeight;
       }
     }
 
-    function renderCitationChips(runId, chunks) {
-      const citationsBar = document.getElementById(`citations-${runId}`);
-      const chipsContainer = document.getElementById(`citation-chips-${runId}`);
-      if (!citationsBar || !chipsContainer || !chunks.length) return;
-
-      citationsBar.classList.remove('hidden');
-      chipsContainer.innerHTML = '';
-      chunks.forEach(c => {
-        const chip = document.createElement('span');
-        chip.className = 'px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-300 font-mono';
-        chip.innerHTML = `<span class="text-zinc-100 font-bold">#Chunk ${escapeHtml(c.chunk_id)}</span> <span class="text-zinc-400">(p.${escapeHtml(c.page)})</span> <span class="text-amber-400">${c.score.toFixed(3)}</span>`;
-        chipsContainer.appendChild(chip);
-      });
+    // Toggle Accordion
+    function toggleAccordion(id) {
+      const el = document.getElementById(id);
+      const chevron = document.getElementById(`chevron-${id}`);
+      el.classList.toggle('hidden');
+      if (chevron) {
+        chevron.classList.toggle('rotate-180');
+      }
     }
 
-    function renderWaterfall(timings, totalLatency) {
-      const container = document.getElementById('waterfall-bars');
-      container.innerHTML = '';
-      document.getElementById('total-time-badge').textContent = `${totalLatency.toFixed(1)} ms`;
+    // A/B Compare Execution
+    async function executeCompare() {
+      const input = document.getElementById('query-input');
+      const query = input.value.trim();
+      if (!query || isQueryRunning) return;
 
-      timings.forEach(t => {
-        const pct = Math.max(8, Math.min(100, (t.duration_ms / totalLatency) * 100));
-        const div = document.createElement('div');
-        div.className = 'space-y-1';
-        div.innerHTML = `
-          <div class="flex justify-between text-[10px] text-zinc-400">
-            <span>${escapeHtml(t.step)}</span>
-            <span class="text-zinc-200 font-semibold">${t.duration_ms.toFixed(1)} ms</span>
+      isQueryRunning = true;
+      runCounter++;
+
+      const welcome = document.getElementById('welcome-card');
+      if (welcome) welcome.remove();
+
+      const feed = document.getElementById('chat-feed');
+
+      // User Bubble
+      const userBubble = document.createElement('div');
+      userBubble.className = 'flex justify-end';
+      userBubble.innerHTML = `
+        <div class="max-w-xl bg-zinc-800/90 text-white text-xs px-4 py-2.5 rounded-2xl rounded-tr-sm border border-zinc-700/60 font-sans shadow-md flex items-center gap-2">
+          <span class="text-amber-400 font-bold">[COMPARE A/B]</span>
+          <span>${escapeHtml(query)}</span>
+        </div>
+      `;
+      feed.appendChild(userBubble);
+
+      // Compare Container
+      const compareCard = document.createElement('div');
+      compareCard.className = 'max-w-4xl card-border rounded-xl p-5 shadow-lg flex flex-col gap-4 font-mono';
+      compareCard.innerHTML = `
+        <div class="flex items-center justify-between border-b border-zinc-800/80 pb-3 text-xs">
+          <div class="flex items-center gap-2">
+            <i data-lucide="columns-2" class="w-4 h-4 text-amber-400"></i>
+            <span class="font-bold text-zinc-100">Live A/B Retrieval Comparison</span>
           </div>
-          <div class="w-full bg-zinc-900 rounded h-1 overflow-hidden border border-zinc-800">
-            <div class="bg-zinc-200 h-full rounded transition-all duration-300" style="width: ${pct}%"></div>
+          <span class="text-[10px] text-zinc-400">Simultaneous Execution</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <!-- Col A: Naive Vector -->
+          <div class="p-3 rounded-lg border border-zinc-800 bg-zinc-950/70 flex flex-col gap-2">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-1.5 text-xs">
+              <span class="font-bold text-zinc-300">Model A: Naive Vector</span>
+              <span class="text-[10px] text-zinc-500" id="cmp-latency-a">-- ms</span>
+            </div>
+            <div id="cmp-answer-a" class="text-xs text-zinc-200 font-sans leading-relaxed min-h-[80px]">
+              <span class="text-zinc-500 font-mono text-[11px]">Memproses...</span>
+            </div>
           </div>
-        `;
-        container.appendChild(div);
-      });
-    }
 
-    function renderRetrievedChunks(chunks) {
-      const container = document.getElementById('retrieved-chunks-list');
-      container.innerHTML = '';
-      chunks.forEach(c => {
-        const div = document.createElement('div');
-        div.className = 'p-2.5 rounded border border-zinc-800/90 bg-[#101014] text-xs font-mono space-y-1';
-        div.innerHTML = `
-          <div class="flex justify-between items-center text-[10px]">
-            <span class="text-zinc-200 font-bold">#CHUNK ${escapeHtml(c.chunk_id)} (p.${escapeHtml(c.page)})</span>
-            <span class="text-amber-400 font-semibold">${c.score.toFixed(4)}</span>
+          <!-- Col B: Albatross Hybrid -->
+          <div class="p-3 rounded-lg border border-amber-500/30 bg-zinc-950/70 flex flex-col gap-2">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-1.5 text-xs">
+              <span class="font-bold text-amber-400">Model B: Albatross Hybrid RRF</span>
+              <span class="text-[10px] text-amber-400 font-bold" id="cmp-latency-b">-- ms</span>
+            </div>
+            <div id="cmp-answer-b" class="text-xs text-zinc-200 font-sans leading-relaxed min-h-[80px]">
+              <span class="text-zinc-500 font-mono text-[11px]">Memproses...</span>
+            </div>
           </div>
-          <p class="text-zinc-400 text-[11px] font-sans leading-relaxed line-clamp-3">${escapeHtml(c.text)}</p>
-        `;
-        container.appendChild(div);
-      });
+        </div>
+      `;
+      feed.appendChild(compareCard);
+      feed.scrollTop = feed.scrollHeight;
+      lucide.createIcons();
+
+      input.value = '';
+
+      async function streamQuery(mode, answerDivId, latencySpanId) {
+        const answerDiv = document.getElementById(answerDivId);
+        const latencySpan = document.getElementById(latencySpanId);
+        answerDiv.textContent = '';
+
+        try {
+          const res = await fetch('/api/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, mode, provider: 'opus' })
+          });
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('data: ')) {
+                const dataStr = trimmed.slice(6);
+                if (dataStr === '[DONE]') continue;
+                try {
+                  const ev = JSON.parse(dataStr);
+                  if (ev.type === 'delta') {
+                    answerDiv.textContent += ev.content;
+                    feed.scrollTop = feed.scrollHeight;
+                  }
+                  if (ev.type === 'telemetry') {
+                    latencySpan.textContent = `${ev.total_latency_ms} ms`;
+                  }
+                } catch {}
+              }
+            }
+          }
+        } catch (e) {
+          answerDiv.innerHTML = `<span class="text-rose-400">Error: ${e.message}</span>`;
+        }
+      }
+
+      await Promise.all([
+        streamQuery('naive', 'cmp-answer-a', 'cmp-latency-a'),
+        streamQuery('hybrid', 'cmp-answer-b', 'cmp-latency-b')
+      ]);
+
+      isQueryRunning = false;
     }
 
-    async function reloadSample() {
-      await fetch('/api/reload-sample', { method: 'POST' });
-      await loadStatusAndChunks();
+    // Drag and Drop Upload
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file-input');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('border-zinc-400');
+    });
+
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('border-zinc-400');
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('border-zinc-400');
+      if (e.dataTransfer.files.length) {
+        handleUpload(e.dataTransfer.files[0]);
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length) {
+        handleUpload(e.target.files[0]);
+      }
+    });
+
+    async function handleUpload(file) {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert(`Sukses mengunggah ${file.name} (${data.added_chunks} chunks ditambahkan).`);
+          await loadDocumentsAndStatus();
+        } else {
+          alert(`Upload gagal: ${data.detail || 'Error'}`);
+        }
+      } catch (err) {
+        alert(`Gagal mengunggah file: ${err.message}`);
+      } finally {
+        fileInput.value = '';
+      }
     }
 
+    // Benchmark Studio
     function openBenchmarkModal() {
       document.getElementById('benchmark-modal').classList.remove('hidden');
+      lucide.createIcons();
     }
+
     function closeBenchmarkModal() {
       document.getElementById('benchmark-modal').classList.add('hidden');
     }
 
     async function runBenchmarkAction() {
       const btn = document.getElementById('bench-trigger-btn');
-      btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>RUNNING QUANTITATIVE BENCHMARK...</span>`;
-      lucide.createIcons();
+      btn.disabled = true;
+      btn.innerHTML = `<span class="animate-spin mr-2">⚙️</span> Mengevaluasi dataset benchmark...`;
 
       try {
         const res = await fetch('/api/benchmark', { method: 'POST' });
+        if (!res.ok) throw new Error("Gagal menjalankan benchmark");
         const data = await res.json();
-        
-        document.getElementById('benchmark-results').classList.remove('hidden');
-        document.getElementById('m-precision').textContent = `${(data.hybrid.avg_precision * 100).toFixed(1)}%`;
-        document.getElementById('m-recall').textContent = `${(data.hybrid.avg_recall * 100).toFixed(1)}%`;
-        document.getElementById('m-faith').textContent = `${(data.hybrid.avg_faithfulness * 100).toFixed(1)}%`;
-        document.getElementById('m-lat').textContent = `${data.hybrid.avg_latency_ms.toFixed(1)} ms`;
 
-        document.getElementById('tb-n-prec').textContent = `${(data.naive.avg_precision * 100).toFixed(1)}%`;
-        document.getElementById('tb-h-prec').textContent = `${(data.hybrid.avg_precision * 100).toFixed(1)}%`;
-        document.getElementById('tb-n-rec').textContent = `${(data.naive.avg_recall * 100).toFixed(1)}%`;
-        document.getElementById('tb-h-rec').textContent = `${(data.hybrid.avg_recall * 100).toFixed(1)}%`;
-        document.getElementById('tb-n-faith').textContent = `${(data.naive.avg_faithfulness * 100).toFixed(1)}%`;
-        document.getElementById('tb-h-faith').textContent = `${(data.hybrid.avg_faithfulness * 100).toFixed(1)}%`;
-        document.getElementById('tb-n-lat').textContent = `${data.naive.avg_latency_ms.toFixed(2)} ms`;
-        document.getElementById('tb-h-lat').textContent = `${data.hybrid.avg_latency_ms.toFixed(2)} ms`;
+        document.getElementById('benchmark-results').classList.remove('hidden');
+        document.getElementById('m-precision').textContent = `${Math.round(data.average_precision * 100)}%`;
+        document.getElementById('m-recall').textContent = `${Math.round(data.average_recall * 100)}%`;
+        document.getElementById('m-faith').textContent = `${data.average_faithfulness.toFixed(2)}`;
+        document.getElementById('m-relevance').textContent = `${data.average_relevance.toFixed(2)}`;
+
+        const detailedList = document.getElementById('detailed-bench-list');
+        detailedList.innerHTML = '';
+        (data.detailed_results || []).forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'p-2 rounded bg-zinc-950 border border-zinc-800 flex justify-between items-center text-[11px]';
+          row.innerHTML = `
+            <span class="text-zinc-300 truncate max-w-sm">${escapeHtml(item.question)}</span>
+            <span class="text-emerald-400 font-bold">Prec: ${Math.round(item.scores.context_precision * 100)}% | Rec: ${Math.round(item.scores.context_recall * 100)}%</span>
+          `;
+          detailedList.appendChild(row);
+        });
       } catch (err) {
-        alert("Benchmark failed: " + err.message);
+        alert("Error evaluasi: " + err.message);
       } finally {
-        btn.innerHTML = `<i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i><span>RUN RAGAS BENCHMARK EXPERIMENT</span>`;
+        btn.disabled = false;
+        btn.innerHTML = `<i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i><span>JALANKAN ULANG BENCHMARK</span>`;
         lucide.createIcons();
       }
     }
 
-    document.getElementById('dropzone').addEventListener('click', () => {
-      document.getElementById('file-input').click();
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      loadDocumentsAndStatus();
     });
-
-    document.getElementById('file-input').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-
-      // Client-side file size pre-check (10MB limit)
-      if (file.size > 10 * 1024 * 1024) {
-        alert("File size exceeds 10MB limit.");
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append('file', file);
-
-      try {
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (!res.ok) {
-          const errData = await res.json();
-          alert(`Upload failed: ${errData.detail || 'Unknown error'}`);
-          return;
-        }
-        const data = await res.json();
-        alert(`Indexed ${data.added_chunks} new chunks!`);
-        await loadStatusAndChunks();
-      } catch (e) {
-        alert(`Upload failed: ${e.message}`);
-      }
-    });
-
-    loadStatusAndChunks();
   </script>
 </body>
 </html>

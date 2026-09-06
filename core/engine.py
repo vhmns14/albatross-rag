@@ -150,6 +150,21 @@ class AlbatrossEngine:
 
             return len(new_chunks)
 
+    def delete_document(self, source_name: str) -> int:
+        """Remove all chunks belonging to a document and rebuild indices."""
+        with self._lock:
+            self.chunks = [c for c in self.chunks if c.source != source_name]
+            if not self.chunks:
+                self.bm25 = None
+                self.dense_embeddings = None
+                self.corpus_tokenized.clear()
+            else:
+                self.corpus_tokenized = [c.text.lower().split() for c in self.chunks]
+                self.bm25 = BM25Okapi(self.corpus_tokenized)
+                texts = [c.text for c in self.chunks]
+                self.dense_embeddings = get_embeddings(texts)
+            return len(self.chunks)
+
     # ---------------------------------------------------------
     # 2. Retrieval Strategies (Thread-Safe & Dimension-Guarded)
     # ---------------------------------------------------------
