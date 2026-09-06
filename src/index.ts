@@ -102,6 +102,34 @@ function checkRateLimit(ip: string, action: string, maxReq: number, windowSec: n
   return { allowed: true };
 }
 
+// Visitor / Guest Trial Quota Store (5 queries, 2 uploads per IP per 24h)
+interface GuestQuota {
+  queries: number;
+  uploads: number;
+  resetAt: number;
+}
+const guestQuotaStore = new Map<string, GuestQuota>();
+const GUEST_MAX_QUERIES = 5;
+const GUEST_MAX_UPLOADS = 2;
+const GUEST_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function getGuestQuota(ip: string): GuestQuota {
+  const now = Date.now();
+  let record = guestQuotaStore.get(ip);
+
+  if (guestQuotaStore.size > 5000) {
+    for (const [k, v] of guestQuotaStore.entries()) {
+      if (now > v.resetAt) guestQuotaStore.delete(k);
+    }
+  }
+
+  if (!record || now > record.resetAt) {
+    record = { queries: 0, uploads: 0, resetAt: now + GUEST_WINDOW_MS };
+    guestQuotaStore.set(ip, record);
+  }
+  return record;
+}
+
 // Authentication Validator
 function checkAuth(request: Request, env: Env): boolean {
   const secret = (env.ADMIN_KEY || env.ACCESS_KEY || "").trim();
@@ -449,9 +477,10 @@ export default {
       "Content-Type": "application/json"
     };
 
-    // 2. GET /api/status (Public health check)
+    // 2. GET /api/status (Public health check & Guest Quota)
     if (url.pathname === "/api/status" && request.method === "GET") {
       const isAuthed = checkAuth(request, env);
+      const quota = getGuestQuota(clientIp);
       return new Response(JSON.stringify({
         status: "online",
         chunks_indexed: chunks.length,
@@ -461,6 +490,14 @@ export default {
         total_queries: sessionStats.total_queries,
         uptime_seconds: Math.floor((Date.now() - sessionStats.start_time) / 1000),
         authenticated: isAuthed,
+        guest_quota: isAuthed ? null : {
+          queries_used: quota.queries,
+          queries_limit: GUEST_MAX_QUERIES,
+          queries_remaining: Math.max(0, GUEST_MAX_QUERIES - quota.queries),
+          uploads_used: quota.uploads,
+          uploads_limit: GUEST_MAX_UPLOADS,
+          uploads_remaining: Math.max(0, GUEST_MAX_UPLOADS - quota.uploads)
+        },
         ...(isAuthed ? { total_cost_usd: +sessionStats.total_cost_usd.toFixed(6) } : {})
       }), { headers: jsonHeaders });
     }
@@ -484,7 +521,7 @@ export default {
       return new Response(JSON.stringify(items), { headers: jsonHeaders });
     }
 
-    // 5. POST /api/documents/clear (Authentication required)
+    // 5. POST /api/documents/clear (Admin only)
     if (url.pathname === "/api/documents/clear" && request.method === "POST") {
       if (!checkAuth(request, env)) {
         return new Response(JSON.stringify({ error: "Akses ditolak: Dibutuhkan Authorization Bearer token untuk mengosongkan database." }), { status: 401, headers: jsonHeaders });
@@ -493,15 +530,16 @@ export default {
       return new Response(JSON.stringify({ status: "success", message: "Knowledge base dikosongkan.", chunks_count: 0 }), { headers: jsonHeaders });
     }
 
-    // 6. POST /api/documents/delete (Authentication required)
+    // 6. POST /api/documents/delete (Allowed for uploaded docs, protected for system demo)
     if (url.pathname === "/api/documents/delete" && request.method === "POST") {
-      if (!checkAuth(request, env)) {
-        return new Response(JSON.stringify({ error: "Akses ditolak: Dibutuhkan Authorization Bearer token untuk menghapus dokumen." }), { status: 401, headers: jsonHeaders });
-      }
+      const isAuthed = checkAuth(request, env);
       try {
         const body = await request.json() as { name: string };
         if (!body.name) {
           return new Response(JSON.stringify({ detail: "Nama dokumen wajib disertakan." }), { status: 400, headers: jsonHeaders });
+        }
+        if (!isAuthed && body.name.includes("(Demo)")) {
+          return new Response(JSON.stringify({ error: "Dokumen demo sistem hanya dapat dihapus oleh Admin." }), { status: 403, headers: jsonHeaders });
         }
         chunks = chunks.filter(c => c.source !== body.name);
         return new Response(JSON.stringify({
@@ -515,10 +553,11 @@ export default {
       }
     }
 
-    // 7. POST /api/reload-sample (Authentication required)
+    // 7. POST /api/reload-sample (Rate-limited public reload demo)
     if (url.pathname === "/api/reload-sample" && request.method === "POST") {
-      if (!checkAuth(request, env)) {
-        return new Response(JSON.stringify({ error: "Akses ditolak: Dibutuhkan Authorization Bearer token untuk memuat demo." }), { status: 401, headers: jsonHeaders });
+      const rl = checkRateLimit(clientIp, "reload_demo", 1, 15);
+      if (!rl.allowed) {
+        return new Response(JSON.stringify({ error: `Silakan tunggu ${rl.retryAfter} detik sebelum memuat ulang demo.` }), { status: 429, headers: jsonHeaders });
       }
       initCorpus();
       return new Response(JSON.stringify({
@@ -528,10 +567,17 @@ export default {
       }), { headers: jsonHeaders });
     }
 
-    // 8. POST /api/upload (Rate limited + Authentication required)
+    // 8. POST /api/upload (Visitor Quota: 2 uploads / Admin Unlimited)
     if (url.pathname === "/api/upload" && request.method === "POST") {
-      if (!checkAuth(request, env)) {
-        return new Response(JSON.stringify({ error: "Akses ditolak: Dibutuhkan Authorization Bearer token untuk mengunggah dokumen." }), { status: 401, headers: jsonHeaders });
+      const isAuthed = checkAuth(request, env);
+      const quota = getGuestQuota(clientIp);
+
+      if (!isAuthed) {
+        if (quota.uploads >= GUEST_MAX_UPLOADS) {
+          return new Response(JSON.stringify({
+            error: `Kuota upload pengunjung (guest trial) telah habis (${GUEST_MAX_UPLOADS}/${GUEST_MAX_UPLOADS} dokumen). Masukkan Kunci Akses Admin untuk mengunggah lebih banyak.`
+          }), { status: 429, headers: jsonHeaders });
+        }
       }
 
       // Rate limit: Max 6 uploads per minute per IP
@@ -564,13 +610,29 @@ export default {
           return new Response(JSON.stringify({ detail: "Dokumen tidak mengandung teks yang dapat dibaca." }), { status: 400, headers: jsonHeaders });
         }
 
+        // Guest safety limit: max 50,000 chars per doc
+        if (!isAuthed && text.length > 50000) {
+          return new Response(JSON.stringify({
+            detail: "Untuk akun pengunjung (guest trial), ukuran dokumen dibatasi maks ~50.000 karakter. Gunakan Admin Key untuk file lebih besar."
+          }), { status: 400, headers: jsonHeaders });
+        }
+
         const newChunks = chunkText(text, docName, 1000, 150);
         chunks = [...chunks, ...newChunks];
+        if (!isAuthed) {
+          quota.uploads++;
+        }
+
         return new Response(JSON.stringify({
           status: "success",
           added_chunks: newChunks.length,
           total_chunks: chunks.length,
-          documents: getDocumentsSummary()
+          documents: getDocumentsSummary(),
+          guest_quota: isAuthed ? null : {
+            uploads_used: quota.uploads,
+            uploads_limit: GUEST_MAX_UPLOADS,
+            uploads_remaining: Math.max(0, GUEST_MAX_UPLOADS - quota.uploads)
+          }
         }), { headers: jsonHeaders });
       } catch (err: any) {
         return new Response(JSON.stringify({ detail: err.message || "Gagal memproses upload." }), { status: 400, headers: jsonHeaders });
@@ -634,8 +696,19 @@ export default {
       }), { headers: jsonHeaders });
     }
 
-    // 10. POST /api/query (Streaming SSE with Rate Limit)
+    // 10. POST /api/query (Streaming SSE with Guest Trial Quota: 5 queries)
     if (url.pathname === "/api/query" && request.method === "POST") {
+      const isAuthed = checkAuth(request, env);
+      const guestQuota = getGuestQuota(clientIp);
+
+      if (!isAuthed) {
+        if (guestQuota.queries >= GUEST_MAX_QUERIES) {
+          return new Response(JSON.stringify({
+            error: `Kuota percobaan gratis pengunjung telah habis (${GUEST_MAX_QUERIES}/${GUEST_MAX_QUERIES} pertanyaan). Masukkan Kunci Akses Admin untuk melanjutkan tanpa batas.`
+          }), { status: 429, headers: jsonHeaders });
+        }
+      }
+
       // Rate limit: Max 15 queries per 60 seconds per IP
       const rl = checkRateLimit(clientIp, "query", 15, 60);
       if (!rl.allowed) {
@@ -648,7 +721,10 @@ export default {
         return new Response(JSON.stringify({ detail: "Pertanyaan tidak boleh kosong." }), { status: 400, headers: jsonHeaders });
       }
 
-      const isAuthed = checkAuth(request, env);
+      if (!isAuthed) {
+        guestQuota.queries++;
+      }
+
       const mode = body.mode || "hybrid";
       const provider = body.provider || "cf-llama";
       const startTime = performance.now();
@@ -682,7 +758,12 @@ export default {
               text: c.text
             })),
             mode,
-            provider
+            provider,
+            guest_quota: isAuthed ? null : {
+              queries_used: guestQuota.queries,
+              queries_limit: GUEST_MAX_QUERIES,
+              queries_remaining: Math.max(0, GUEST_MAX_QUERIES - guestQuota.queries)
+            }
           };
           await writer.write(encoder.encode(`data: ${JSON.stringify(metaEvent)}\n\n`));
 

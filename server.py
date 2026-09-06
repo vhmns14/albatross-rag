@@ -32,6 +32,29 @@ ADMIN_KEY = (os.getenv("ADMIN_KEY") or os.getenv("ACCESS_KEY") or "").strip()
 # Rate Limiter in-memory store
 rate_limit_store = {}
 
+# Visitor Trial Quotas (5 queries, 2 uploads per IP per 24 hours)
+GUEST_MAX_QUERIES = 5
+GUEST_MAX_UPLOADS = 2
+GUEST_WINDOW_SEC = 24 * 60 * 60  # 24 hours
+guest_quota_store = {}
+
+def get_guest_quota(ip: str) -> dict:
+    now = time.time()
+    record = guest_quota_store.get(ip)
+    if len(guest_quota_store) > 2000:
+        expired = [k for k, v in guest_quota_store.items() if now > v["reset_at"]]
+        for k in expired:
+            del guest_quota_store[k]
+
+    if not record or now > record["reset_at"]:
+        record = {
+            "queries": 0,
+            "uploads": 0,
+            "reset_at": now + GUEST_WINDOW_SEC
+        }
+        guest_quota_store[ip] = record
+    return record
+
 def check_rate_limit(ip: str, action: str, max_req: int, window_sec: int) -> tuple[bool, int]:
     now = time.time()
     key = f"{ip}:{action}"
@@ -114,8 +137,10 @@ async def serve_index():
     return HTMLResponse("<h1>Albatross RAG API is live</h1>")
 
 @app.get("/api/status")
-async def get_status(authorization: Optional[str] = Header(None)):
+async def get_status(request: Request, authorization: Optional[str] = Header(None)):
+    client_ip = request.client.host if request.client else "127.0.0.1"
     is_authed = check_auth(authorization)
+    guest_quota = get_guest_quota(client_ip)
     data = {
         "status": "online",
         "chunks_indexed": len(engine.chunks),
@@ -124,6 +149,15 @@ async def get_status(authorization: Optional[str] = Header(None)):
         "total_queries": session_stats["total_queries"],
         "uptime_seconds": int(time.time() - session_stats["start_time"]),
         "authenticated": is_authed,
+        "guest_quota": None if is_authed else {
+            "queries_limit": GUEST_MAX_QUERIES,
+            "queries_used": guest_quota["queries"],
+            "queries_remaining": max(0, GUEST_MAX_QUERIES - guest_quota["queries"]),
+            "uploads_limit": GUEST_MAX_UPLOADS,
+            "uploads_used": guest_quota["uploads"],
+            "uploads_remaining": max(0, GUEST_MAX_UPLOADS - guest_quota["uploads"]),
+            "reset_in_seconds": max(0, round(guest_quota["reset_at"] - time.time()))
+        }
     }
     if is_authed:
         data["total_cost_usd"] = round(session_stats["total_cost_usd"], 6)
@@ -174,7 +208,13 @@ class DeleteDocRequest(BaseModel):
 
 @app.post("/api/documents/delete")
 async def delete_document_endpoint(req: DeleteDocRequest, authorization: Optional[str] = Header(None)):
-    require_auth(authorization)
+    is_authed = check_auth(authorization)
+    if not is_authed:
+        if "(Demo)" in req.name or req.name == "laporan_keuangan_2024.txt":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Dokumen demo bawaan tidak dapat dihapus oleh tamu. Anda hanya dapat menghapus dokumen yang Anda unggah sendiri."
+            )
     remaining = engine.delete_document(req.name)
     return {"status": "success", "remaining_chunks": remaining}
 
@@ -185,9 +225,17 @@ async def upload_document(
     file: UploadFile = File(...),
     authorization: Optional[str] = Header(None)
 ):
-    require_auth(authorization)
-
     client_ip = request.client.host if request.client else "127.0.0.1"
+    is_authed = check_auth(authorization)
+    guest_quota = get_guest_quota(client_ip)
+
+    if not is_authed:
+        if guest_quota["uploads"] >= GUEST_MAX_UPLOADS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Kuota unggah dokumen untuk tamu telah habis (Maks {GUEST_MAX_UPLOADS} dokumen / 24 jam). Silakan masukkan Kunci Akses Admin untuk unggah tanpa batas."
+            )
+
     allowed, retry_after = check_rate_limit(client_ip, "upload", 6, 60)
     if not allowed:
         raise HTTPException(
@@ -242,16 +290,40 @@ async def upload_document(
         text_str = content.decode("utf-8", errors="ignore").strip()
         if not text_str:
             raise HTTPException(status_code=400, detail="Uploaded text file is empty or contains only whitespace.")
+        if not is_authed and len(text_str) > 50000:
+            raise HTTPException(
+                status_code=400,
+                detail="Untuk pengunjung tamu, panjang teks dokumen dibatasi maksimal ~50.000 karakter (~10-15 halaman). Gunakan Kunci Akses Admin untuk dokumen yang lebih besar."
+            )
         count = engine.load_text(text_str, source_name=clean_filename)
 
     if count == 0:
         raise HTTPException(status_code=400, detail="No readable text chunks could be extracted from the document.")
 
-    return {"status": "success", "added_chunks": count, "total_chunks": len(engine.chunks)}
+    if not is_authed:
+        guest_quota["uploads"] += 1
+
+    return {
+        "status": "success",
+        "added_chunks": count,
+        "total_chunks": len(engine.chunks),
+        "guest_quota": None if is_authed else {
+            "uploads_used": guest_quota["uploads"],
+            "uploads_limit": GUEST_MAX_UPLOADS,
+            "uploads_remaining": max(0, GUEST_MAX_UPLOADS - guest_quota["uploads"])
+        }
+    }
 
 @app.post("/api/reload-sample")
-async def reload_sample(authorization: Optional[str] = Header(None)):
-    require_auth(authorization)
+async def reload_sample(request: Request, authorization: Optional[str] = Header(None)):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    allowed, retry_after = check_rate_limit(client_ip, "reload", 1, 15)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Terlalu sering reload sampel dokumen. Tunggu {retry_after} detik.",
+            headers={"Retry-After": str(retry_after)}
+        )
     engine.clear()
     count = engine.load_text(SAMPLE_CORPUS, source_name="laporan_keuangan_2024.txt")
     return {"status": "success", "total_chunks": count}
@@ -269,6 +341,16 @@ async def execute_query(
 ):
     """Execute retrieval + streaming LLM generation via Server-Sent Events (SSE)."""
     client_ip = request.client.host if request.client else "127.0.0.1"
+    is_authed = check_auth(authorization)
+    guest_quota = get_guest_quota(client_ip)
+
+    if not is_authed:
+        if guest_quota["queries"] >= GUEST_MAX_QUERIES:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Kuota pertanyaan untuk tamu telah habis (Maks {GUEST_MAX_QUERIES} pertanyaan / 24 jam). Silakan masukkan Kunci Akses Admin untuk bertanya tanpa batas."
+            )
+
     allowed, retry_after = check_rate_limit(client_ip, "query", 15, 60)
     if not allowed:
         raise HTTPException(
@@ -277,10 +359,12 @@ async def execute_query(
             headers={"Retry-After": str(retry_after)}
         )
 
-    is_authed = check_auth(authorization)
     sanitized_query = req.query.strip()
     if not sanitized_query:
         raise HTTPException(status_code=400, detail="Query cannot be empty or whitespace.")
+
+    if not is_authed:
+        guest_quota["queries"] += 1
 
     telemetry = QueryTelemetry(
         model="claude-opus-4-6" if req.provider == "opus" else req.provider,
@@ -312,6 +396,11 @@ async def execute_query(
                 ],
                 "mode": req.mode,
                 "provider": req.provider,
+                "guest_quota": None if is_authed else {
+                    "queries_used": guest_quota["queries"],
+                    "queries_limit": GUEST_MAX_QUERIES,
+                    "queries_remaining": max(0, GUEST_MAX_QUERIES - guest_quota["queries"])
+                }
             }
             yield f"data: {json.dumps(initial_meta)}\n\n"
 

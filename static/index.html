@@ -97,6 +97,12 @@
         <span class="text-amber-400 font-semibold" id="header-chunks-count">0 chunks</span>
       </div>
 
+      <!-- Guest Quota Badge -->
+      <div id="quota-hud" class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded text-[11px] text-zinc-300">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-400"></i>
+        <span id="quota-hud-text">Trial: <strong id="q-queries" class="text-amber-400">5</strong> tanya • <strong id="q-uploads" class="text-amber-400">2</strong> upload</span>
+      </div>
+
       <!-- Benchmark Modal Button -->
       <button onclick="openBenchmarkModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 transition">
         <i data-lucide="gauge" class="w-3.5 h-3.5 text-amber-400"></i>
@@ -105,7 +111,7 @@
 
       <!-- Auth Key Modal Button -->
       <button onclick="openAuthModal()" id="auth-header-btn" class="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 transition" title="Kunci Akses Admin (Bearer Auth)">
-        <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i>
+        <i data-lucide="lock" class="w-3.5 h-3.5 text-zinc-400"></i>
         <span class="hidden sm:inline">Kunci Akses</span>
       </button>
 
@@ -535,16 +541,37 @@
           } else {
             document.getElementById('session-cost-hud').textContent = '--';
           }
+
+          const quotaHud = document.getElementById('quota-hud');
+          const quotaText = document.getElementById('quota-hud-text');
           const authBtn = document.getElementById('auth-header-btn');
-          if (authBtn) {
-            if (s.authenticated) {
-              authBtn.classList.remove('border-rose-900', 'text-rose-400');
-              authBtn.classList.add('border-emerald-800/80', 'text-emerald-400');
-            } else {
-              authBtn.classList.remove('border-emerald-800/80', 'text-emerald-400');
-              authBtn.classList.add('border-rose-900', 'text-rose-400');
+          const dropzoneDesc = document.getElementById('dropzone-desc');
+
+          if (s.authenticated) {
+            if (quotaHud) {
+              quotaHud.className = 'hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-950/40 border border-emerald-800/60 rounded text-[11px] text-emerald-300';
+              if (quotaText) quotaText.innerHTML = '<i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400 inline mr-1"></i><span>Admin: Unlimited</span>';
+            }
+            if (authBtn) {
+              authBtn.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded border border-emerald-800/80 bg-zinc-900 hover:bg-zinc-800 text-emerald-400 transition';
+              authBtn.innerHTML = '<i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i><span class="hidden sm:inline">Admin (Aktif)</span>';
+            }
+            if (dropzoneDesc) dropzoneDesc.textContent = 'PDF atau TXT (Maks. 10MB)';
+          } else {
+            if (quotaHud && s.guest_quota) {
+              const q = s.guest_quota;
+              quotaHud.className = 'hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded text-[11px] text-zinc-300';
+              if (quotaText) {
+                quotaText.innerHTML = `Trial: <strong class="${q.queries_remaining > 0 ? 'text-amber-400' : 'text-rose-400'}">${q.queries_remaining}/${q.queries_limit}</strong> tanya • <strong class="${q.uploads_remaining > 0 ? 'text-amber-400' : 'text-rose-400'}">${q.uploads_remaining}/${q.uploads_limit}</strong> upload`;
+              }
+              if (dropzoneDesc) dropzoneDesc.textContent = `PDF atau TXT (Trial: sisa ${q.uploads_remaining} file)`;
+            }
+            if (authBtn) {
+              authBtn.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 transition';
+              authBtn.innerHTML = '<i data-lucide="lock" class="w-3.5 h-3.5 text-zinc-400"></i><span class="hidden sm:inline">Kunci Akses</span>';
             }
           }
+          lucide.createIcons();
         }
 
         if (docsRes.ok) {
@@ -669,8 +696,13 @@
       }
     }
 
-    // Clear all documents
+    // Clear all documents (Admin only)
     async function confirmClearAll() {
+      if (!getAuthToken()) {
+        alert("Fitur mengosongkan seluruh knowledge base hanya dapat dilakukan oleh Admin. Silakan masukkan Kunci Akses Admin.");
+        openAuthModal();
+        return;
+      }
       if (!confirm("Kosongkan seluruh knowledge base? Semua chunks akan dihapus.")) return;
       try {
         const res = await fetch('/api/documents/clear', { 
@@ -819,7 +851,12 @@
 
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error || errData.detail || `Server returned HTTP ${response.status}`);
+          const errMsg = errData.error || errData.detail || `Server returned HTTP ${response.status}`;
+          if (response.status === 429 && errMsg.includes("Kuota")) {
+            alert(errMsg);
+            openAuthModal();
+          }
+          throw new Error(errMsg);
         }
 
         const reader = response.body.getReader();
@@ -917,6 +954,7 @@
       } finally {
         isQueryRunning = false;
         feed.scrollTop = feed.scrollHeight;
+        loadDocumentsAndStatus();
       }
     }
 
@@ -1012,7 +1050,12 @@
 
           if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.error || errData.detail || `Server returned HTTP ${res.status}`);
+            const errMsg = errData.error || errData.detail || `Server returned HTTP ${res.status}`;
+            if (res.status === 429 && errMsg.includes("Kuota")) {
+              alert(errMsg);
+              openAuthModal();
+            }
+            throw new Error(errMsg);
           }
 
           const reader = res.body.getReader();
@@ -1056,12 +1099,15 @@
         }
       }
 
-      await Promise.all([
-        streamQuery('naive', 'cmp-answer-a', 'cmp-latency-a'),
-        streamQuery('hybrid', 'cmp-answer-b', 'cmp-latency-b')
-      ]);
-
-      isQueryRunning = false;
+      try {
+        await Promise.all([
+          streamQuery('naive', 'cmp-answer-a', 'cmp-latency-a'),
+          streamQuery('hybrid', 'cmp-answer-b', 'cmp-latency-b')
+        ]);
+      } finally {
+        isQueryRunning = false;
+        loadDocumentsAndStatus();
+      }
     }
 
     // Line-Aware Text Extraction from PDF using PDF.js
